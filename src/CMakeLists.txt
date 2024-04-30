@@ -7,3 +7,6 @@ add_app(sidekick_proxy)
 add_app(webrtc_client)
 add_app(webrtc_server)
 add_app(playground)
+
+find_library(LIBPCAP pcap)
+target_link_libraries(sidekick_proxy "${LIBPCAP}")

@@ -22,6 +22,8 @@ static constexpr size_t UDP_HDR_LEN = sizeof( struct udphdr );
 class PacketSniffer
 {
 private:
+  // TODO: could add some more filtering here (e.g., ignore multicast destinations)?
+  static constexpr const char* PCAP_FILTER = "ip && udp";
   static constexpr int PCAP_PROMISC = 1;
   static constexpr int PCAP_TIMEOUT = -1;
   static constexpr int PCAP_OPTIMIZE = 1;
@@ -37,7 +39,7 @@ private:
   static void packet_handler( u_char* user, const struct pcap_pkthdr* pkthdr, const u_char* packet );
 
 public:
-  PacketSniffer( std::string& interface, std::string& filter );
+  PacketSniffer( const std::string& interface );
   ~PacketSniffer()
   {
     if ( _pcap_handler ) {
@@ -45,7 +47,7 @@ public:
     }
   };
 
-  std::thread start_capture();
+  std::thread run();
   std::shared_ptr<conqueue<IPv4Datagram>> datagrams() { return _datagrams; }
 };
 
@@ -76,7 +78,7 @@ public:
     _quacking_socket.bind( Address( "0.0.0.0", 0 ) );
   };
 
-  std::thread start_quacking();
+  std::thread run();
   void handle_datagram( IPv4Datagram& datagram );
   void update_quack( IPv4Address src_address, uint32_t packet_id );
 };

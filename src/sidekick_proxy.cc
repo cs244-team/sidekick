@@ -2,6 +2,42 @@
 
 #include "sidekick_proxy.hh"
 
+PacketSniffer::PacketSniffer( const std::string& interface )
+{
+  _datagrams = std::make_shared<conqueue<IPv4Datagram>>();
+  _pcap_errbuf.resize( PCAP_ERRBUF_SIZE );
+
+  _pcap_handler = pcap_open_live( interface.c_str(), BUFSIZ, PCAP_PROMISC, PCAP_TIMEOUT, _pcap_errbuf.data() );
+  if ( _pcap_handler == NULL ) {
+    throw std::runtime_error( "pcap_open_live() failed: " + _pcap_errbuf );
+  }
+
+  // Only capture incoming packets
+  if ( pcap_setdirection( _pcap_handler, PCAP_D_IN ) < 0 ) {
+    throw std::runtime_error( "pcap_setdirection() failed" );
+  }
+
+  // Set filtering rules
+  struct bpf_program bpf;
+  if ( pcap_compile( _pcap_handler, &bpf, PCAP_FILTER, PCAP_OPTIMIZE, 0 ) < 0 ) {
+    throw std::runtime_error( "pcap_compile() failed" );
+  }
+
+  // Apply filter
+  if ( pcap_setfilter( _pcap_handler, &bpf ) == -1 ) {
+    throw std::runtime_error( "pcap_setfilter() failed" );
+  }
+}
+
+std::thread PacketSniffer::run()
+{
+  return std::thread( [&] {
+    if ( pcap_loop( _pcap_handler, 0, packet_handler, reinterpret_cast<u_char*>( this ) ) < 0 ) {
+      throw std::runtime_error( "pcap_loop() failed" );
+    }
+  } );
+}
+
 void PacketSniffer::packet_handler( u_char* user, const struct pcap_pkthdr* pkthdr, const u_char* packet )
 {
   if ( pkthdr->caplen < ETH_HDR_LEN + IP_HDR_LEN ) {
@@ -19,43 +55,7 @@ void PacketSniffer::packet_handler( u_char* user, const struct pcap_pkthdr* pkth
   _this->_datagrams->push( datagram );
 }
 
-PacketSniffer::PacketSniffer( std::string& interface, std::string& filter )
-{
-  _datagrams = std::make_shared<conqueue<IPv4Datagram>>();
-  _pcap_errbuf.resize( PCAP_ERRBUF_SIZE );
-
-  _pcap_handler = pcap_open_live( interface.c_str(), BUFSIZ, PCAP_PROMISC, PCAP_TIMEOUT, _pcap_errbuf.data() );
-  if ( _pcap_handler == NULL ) {
-    throw std::runtime_error( "pcap_open_live() failed: " + _pcap_errbuf );
-  }
-
-  // Only capture incoming packets
-  if ( pcap_setdirection( _pcap_handler, PCAP_D_IN ) < 0 ) {
-    throw std::runtime_error( "pcap_setdirection() failed" );
-  }
-
-  // Set filtering rules
-  struct bpf_program bpf;
-  if ( pcap_compile( _pcap_handler, &bpf, filter.c_str(), PCAP_OPTIMIZE, 0 ) < 0 ) {
-    throw std::runtime_error( "pcap_compile() failed" );
-  }
-
-  // Apply filter
-  if ( pcap_setfilter( _pcap_handler, &bpf ) == -1 ) {
-    throw std::runtime_error( "pcap_setfilter() failed" );
-  }
-}
-
-std::thread PacketSniffer::start_capture()
-{
-  return std::thread( [&] {
-    if ( pcap_loop( _pcap_handler, 0, packet_handler, reinterpret_cast<u_char*>( this ) ) < 0 ) {
-      throw std::runtime_error( "pcap_loop() failed" );
-    }
-  } );
-}
-
-std::thread SidekickSender::start_quacking()
+std::thread SidekickSender::run()
 {
   return std::thread( [&] {
     // Pull datagrams off the sniffer's queue
@@ -101,7 +101,8 @@ void SidekickSender::update_quack( IPv4Address src_address, uint32_t packet_id )
     std::cerr << "Sending quack to: " << dest.ip() << "\n"
               << "num_received: " << quack.num_received << "\n"
               << "last_received_id: " << quack.last_received_id << "\n"
-              << "power_sums: " << quack.power_sums << std::endl;
+              << "power_sums: " << quack.power_sums << "\n"
+              << std::endl;
 
     auto serialized_quack = serialize( quack );
     std::string payload = std::accumulate( serialized_quack.begin(), serialized_quack.end(), std::string {} );
@@ -111,22 +112,28 @@ void SidekickSender::update_quack( IPv4Address src_address, uint32_t packet_id )
 
 int main( int argc, char* argv[] )
 {
-  // TODO: make all of these cli args
-  std::string interface = "enp0s1"; // get from args
-  std::string filter = "ip && udp"; // IPv4 and UDP packets
-  // TODO: ^^ could add some more filtering here (e.g., ignore multicast destinations)
+  if ( argc <= 0 ) {
+    return EXIT_FAILURE;
+  }
 
-  size_t quacking_interval = 2;
-  size_t missing_packet_threshold = 8;
+  auto args = std::span( argv, argc );
 
-  PacketSniffer sniffer( interface, filter );
+  if ( argc != 4 ) {
+    std::cerr << "Usage: " << args[0] << " <interface> <quacking_interval> <missing_packet_threshold>" << std::endl;
+    return EXIT_FAILURE;
+  }
+
+  // Example: ./sidekick_proxy enp0s1 2 8
+  std::string interface { args[1] };
+  size_t quacking_interval = strtol( args[2], nullptr, 0 );
+  size_t missing_packet_threshold = strtol( args[3], nullptr, 0 );
+
+  PacketSniffer sniffer( interface );
   SidekickSender sidekick( quacking_interval, missing_packet_threshold, sniffer.datagrams() );
-
-  std::thread sidekick_thread = sidekick.start_quacking();
-  std::thread sniffer_thread = sniffer.start_capture();
-
+  std::thread sidekick_thread = sidekick.run();
+  std::thread sniffer_thread = sniffer.run();
   sidekick_thread.join();
   sniffer_thread.join();
 
-  return 0;
+  return EXIT_SUCCESS;
 }

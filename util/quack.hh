@@ -20,6 +20,8 @@ public:
   ModInt( uint64_t n ) : _value( n % QUACK_MODULUS ), _prime( QUACK_MODULUS ) {}
   ModInt( uint64_t n, uint64_t prime ) : _value( n % prime ), _prime( prime ) {} // For testing
 
+  uint32_t value() const { return _value; };
+
   ModInt operator+( const ModInt& rhs ) { return ModInt( _value, _prime ) += rhs; }
   ModInt& operator+=( const ModInt& rhs )
   {
@@ -133,6 +135,8 @@ private:
 
 public:
   PowerSums( size_t threshold ) : _threshold( threshold ) { _sums.resize( threshold ); }
+  // Directly construct the power sums
+  PowerSums( std::vector<ModInt>& sums ) : _threshold( sums.size() ), _sums( std::move( sums ) ) {};
 
   size_t size() const { return _threshold; }
   void add( const ModInt n );

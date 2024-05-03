@@ -12,6 +12,8 @@
 
 #include "parser.hh"
 
+typedef uint32_t IPv4Address;
+
 class InternetChecksum
 {
 private:

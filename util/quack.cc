@@ -3,8 +3,8 @@
 void PowerSums::add( const ModInt n )
 {
   ModInt tmp = n;
-  for ( size_t i = 0; i < _threshold; i++ ) {
-    _sums[i] += tmp;
+  for ( size_t i = 0; i < threshold_; i++ ) {
+    sums_[i] += tmp;
     tmp *= n;
   }
 }
@@ -12,17 +12,17 @@ void PowerSums::add( const ModInt n )
 void PowerSums::remove( const ModInt n )
 {
   ModInt tmp = n;
-  for ( size_t i = 0; i < _threshold; i++ ) {
-    _sums[i] -= tmp;
+  for ( size_t i = 0; i < threshold_; i++ ) {
+    sums_[i] -= tmp;
     tmp *= n;
   }
 }
 
 PowerSums PowerSums::difference( const PowerSums& other )
 {
-  PowerSums diff( _threshold );
-  for ( size_t i = 0; i < _threshold; i++ ) {
-    diff._sums[i] = _sums[i] - other._sums[i];
+  PowerSums diff( threshold_ );
+  for ( size_t i = 0; i < threshold_; i++ ) {
+    diff.sums_[i] = sums_[i] - other.sums_[i];
   }
   return diff;
 }
@@ -42,16 +42,16 @@ PowerSums PowerSums::difference( const PowerSums& other )
 // e_0*x^n - e_1*x^(n-1) + e_2*x^(n-2) + ... + e_n*x^0
 Polynomial::Polynomial( const PowerSums& sums )
 {
-  _coeffs.resize( sums.size() + 1 );
-  _coeffs[0] = 1; // x^n
+  coeffs_.resize( sums.size() + 1 );
+  coeffs_[0] = 1; // x^n
 
-  for ( size_t i = 1; i < _coeffs.size(); i++ ) {
+  for ( size_t i = 1; i < coeffs_.size(); i++ ) {
     for ( size_t j = 1; j < i; j++ ) {
-      _coeffs[i] -= _coeffs[i - j] * sums[j - 1];
+      coeffs_[i] -= coeffs_[i - j] * sums[j - 1];
     }
 
-    _coeffs[i] -= sums[i - 1];
-    _coeffs[i] /= i;
+    coeffs_[i] -= sums[i - 1];
+    coeffs_[i] /= i;
   }
 }
 
@@ -60,7 +60,7 @@ Polynomial::Polynomial( const PowerSums& sums )
 ModInt Polynomial::eval( ModInt x )
 {
   ModInt y = 0;
-  for ( auto coeff : _coeffs ) {
+  for ( auto coeff : coeffs_ ) {
     y = y * x + coeff;
   }
   return y;

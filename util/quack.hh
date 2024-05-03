@@ -12,80 +12,80 @@ class ModInt
   static constexpr uint64_t QUACK_MODULUS = 4294967291; // Largest prime less than 2^32 - 1
 
 private:
-  uint64_t _value;
-  uint64_t _prime;
+  uint64_t value_;
+  uint64_t prime_;
 
 public:
-  ModInt() : _value( 0 ), _prime( QUACK_MODULUS ) {}
-  ModInt( uint64_t n ) : _value( n % QUACK_MODULUS ), _prime( QUACK_MODULUS ) {}
-  ModInt( uint64_t n, uint64_t prime ) : _value( n % prime ), _prime( prime ) {} // For testing
+  ModInt() : value_( 0 ), prime_( QUACK_MODULUS ) {}
+  ModInt( uint64_t n ) : value_( n % QUACK_MODULUS ), prime_( QUACK_MODULUS ) {}
+  ModInt( uint64_t n, uint64_t prime ) : value_( n % prime ), prime_( prime ) {} // For testing
 
-  uint32_t value() const { return _value; };
+  uint32_t value() const { return value_; };
 
-  ModInt operator+( const ModInt& rhs ) { return ModInt( _value, _prime ) += rhs; }
+  ModInt operator+( const ModInt& rhs ) { return ModInt( value_, prime_ ) += rhs; }
   ModInt& operator+=( const ModInt& rhs )
   {
-    assert( _prime == rhs._prime );
-    _value = ( _value + rhs._value ) % _prime;
+    assert( prime_ == rhs.prime_ );
+    value_ = ( value_ + rhs.value_ ) % prime_;
     return *this;
   }
 
-  ModInt operator-( const ModInt& rhs ) { return ModInt( _value, _prime ) -= rhs; }
+  ModInt operator-( const ModInt& rhs ) { return ModInt( value_, prime_ ) -= rhs; }
   ModInt& operator-=( const ModInt& rhs )
   {
-    assert( _prime == rhs._prime );
-    if ( _value < rhs._value )
-      _value += _prime;
-    _value = _value - rhs._value;
+    assert( prime_ == rhs.prime_ );
+    if ( value_ < rhs.value_ )
+      value_ += prime_;
+    value_ = value_ - rhs.value_;
     return *this;
   }
 
-  ModInt operator*( const ModInt& rhs ) { return ModInt( _value, _prime ) *= rhs; }
+  ModInt operator*( const ModInt& rhs ) { return ModInt( value_, prime_ ) *= rhs; }
   ModInt& operator*=( const ModInt& rhs )
   {
-    assert( _prime == rhs._prime );
-    _value = ( _value * rhs._value ) % _prime;
+    assert( prime_ == rhs.prime_ );
+    value_ = ( value_ * rhs.value_ ) % prime_;
     return *this;
   }
 
-  ModInt operator%( const ModInt& rhs ) { return ModInt( _value, _prime ) %= rhs; }
+  ModInt operator%( const ModInt& rhs ) { return ModInt( value_, prime_ ) %= rhs; }
   ModInt& operator%=( const ModInt& rhs )
   {
-    assert( _prime == rhs._prime );
-    _value = ( _value % rhs._value ) % _prime;
+    assert( prime_ == rhs.prime_ );
+    value_ = ( value_ % rhs.value_ ) % prime_;
     return *this;
   }
 
-  ModInt operator/( const ModInt& rhs ) { return ModInt( _value, _prime ) /= rhs; }
+  ModInt operator/( const ModInt& rhs ) { return ModInt( value_, prime_ ) /= rhs; }
   ModInt& operator/=( const ModInt& rhs )
   {
-    assert( _prime == rhs._prime );
+    assert( prime_ == rhs.prime_ );
     *this *= rhs.inverse();
     return *this;
   }
 
   ModInt& operator++()
   {
-    _value = ( _value + 1 ) % _prime;
+    value_ = ( value_ + 1 ) % prime_;
     return *this;
   }
 
   ModInt& operator--()
   {
-    _value = ( _value - 1 ) % _prime;
+    value_ = ( value_ - 1 ) % prime_;
     return *this;
   }
 
   bool operator==( const ModInt& rhs )
   {
-    assert( _prime == rhs._prime );
-    return _value == rhs._value;
+    assert( prime_ == rhs.prime_ );
+    return value_ == rhs.value_;
   }
 
   bool operator!=( const ModInt& rhs )
   {
-    assert( _prime == rhs._prime );
-    return _value != rhs._value;
+    assert( prime_ == rhs.prime_ );
+    return value_ != rhs.value_;
   }
 
   // Fermat or Euclid will help us calculate the inverse of x.
@@ -94,8 +94,8 @@ public:
   // So `x` will be the inverse of `a`.
   ModInt inverse() const
   {
-    int64_t a = _value;
-    int64_t b = _prime;
+    int64_t a = value_;
+    int64_t b = prime_;
     int64_t x = 1;
     int64_t y = 0;
     int64_t quotient;
@@ -114,15 +114,15 @@ public:
     }
 
     if ( x < 0 ) {
-      x += _prime;
+      x += prime_;
     }
 
-    return ModInt( x, _prime );
+    return ModInt( x, prime_ );
   }
 
   friend std::ostream& operator<<( std::ostream& stream, const ModInt& obj )
   {
-    stream << obj._value;
+    stream << obj.value_;
     return stream;
   }
 };
@@ -130,23 +130,23 @@ public:
 class PowerSums
 {
 private:
-  std::vector<ModInt> _sums {};
-  size_t _threshold;
+  std::vector<ModInt> sums_ {};
+  size_t threshold_;
 
 public:
-  PowerSums( size_t threshold ) : _threshold( threshold ) { _sums.resize( threshold ); }
+  PowerSums( size_t threshold ) : threshold_( threshold ) { sums_.resize( threshold ); }
   // Directly construct the power sums
-  PowerSums( std::vector<ModInt>& sums ) : _threshold( sums.size() ), _sums( std::move( sums ) ) {};
+  PowerSums( std::vector<ModInt>& sums ) : threshold_( sums.size() ), sums_( std::move( sums ) ) {};
 
-  size_t size() const { return _threshold; }
+  size_t size() const { return threshold_; }
   void add( const ModInt n );
   void remove( const ModInt n );
   PowerSums difference( const PowerSums& other );
 
-  const ModInt& operator[]( int idx ) const { return _sums[idx]; }
+  const ModInt& operator[]( int idx ) const { return sums_[idx]; }
   friend std::ostream& operator<<( std::ostream& stream, const PowerSums& obj )
   {
-    for ( auto sum : obj._sums ) {
+    for ( auto sum : obj.sums_ ) {
       stream << sum << ' ';
     }
     return stream;
@@ -156,7 +156,7 @@ public:
 class Polynomial
 {
 private:
-  std::vector<ModInt> _coeffs {};
+  std::vector<ModInt> coeffs_ {};
 
 public:
   Polynomial( const PowerSums& sums );
@@ -164,7 +164,7 @@ public:
 
   friend std::ostream& operator<<( std::ostream& stream, const Polynomial& obj )
   {
-    for ( auto sum : obj._coeffs ) {
+    for ( auto sum : obj.coeffs_ ) {
       stream << sum << ' ';
     }
     return stream;

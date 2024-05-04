@@ -10,6 +10,7 @@
 #include <cstring> 
 #include <iostream> 
 #include <netinet/in.h> 
+#include <pair.h>
 #include <unistd.h> 
 #include <condition_variable>
 #include "ipv4_datagram.hh"
@@ -27,8 +28,10 @@ private:
   // Constructor has the buffer, RTT, and some sort of output queue 
 
   int RTT = 0; 
-  int time = 0;
-  mutex queueMutex {};
+
+  vector<pair<int, int>> NACK_packets {}; // <seqno, time>
+  // int time = 0;
+  mutex vectorMutex {};
   condition_variable dataCondition {};
 
   UDPSocket serverSocket {};
@@ -36,25 +39,55 @@ private:
 
   int curr_seqno = 0; 
 
-  queue<string> buffer {};
+  // Maintain iterator 
+  vector<pair<string, bool>> buffer {}; // <data to play, can play>
+
 
 
   void send_NACK(int& seqno){
-    
-    // retransmit NACK up to one per RTT
+
     int curr_time = chrono::high_resolution_clock::now();
-    if (curr_time - time < RTT){
-      return;
+
+    // Retransmit NACK for >1 RTT 
+    for(auto& elem : NACK_packets){
+      if (curr_time - elem.second > RTT){
+        IPv4Datagram dgram;
+        string payload = "Seqno: " + elem.first;
+        dgram.payload.push_back(payload);
+        serverSocket.sendto( serialize(dgram.payload) , clientAddress);
+
+        // Edit vector
+        NACK_packets.second = curr_time;
+      }
     }
 
-    // Make NACK 
-    
-    time = chrono::high_resolution_clock::now();
+    // Add current to retransmit 
+    for (int i = curr_seqno; i < seqno; i++){
+      // Put NACK on wire
+      IPv4Datagram dgram;
+      string payload = "Seqno: " + i;
+      dgram.payload.push_back(payload);
+      serverSocket.sendto( serialize(dgram.payload) , clientAddress);
 
-    IPv4Datagram dgram;
-    dgram.payload.push_back(seqno);
+      // Add to NACK packets vector
+      NACK_packets.push_back(make_pair(seqno, curr_time))  
+    }
+  }
 
-    serverSocket.sendto( serialize(dgram.payload) , clientAddress); // Not sure how to send the packet do i need to like set header of packet or just send data 
+  string extract_data(IPv4Datagram& datagram){
+      // Then add for what you just got 
+    for (const auto& line : datagram.payload) {
+      // Find the substring 'seqno: '
+      size_t pos = line.find("data: ");
+      if (pos != string::npos) {
+          // Extract the portion of the string after 'seqno: '
+          string numberStr = line.substr(pos + "data: ".length());
+
+          // Convert the extracted string to an integer
+          return stoi(numberStr);
+      }
+    }
+    return "";
   }
 
   // Server receives packet, must put it into queue 
@@ -67,12 +100,40 @@ private:
     }
 
     // Case 1: nonconsecutive, send NACK back to client containing seqno of each missing packet
-    if datagram.header.seqno != curr_seqno{
-      send_NACK(datagram.header.seqno);
+    if datagram.header.seqno != curr_seqno + 1{ // Probably > curr_seqno
+      send_NACK(datagram.header.seqno); 
+      
+      // Update buffer
+
+      // First, add empty spots
+      for(int i = curr_seqno+1; i < datagram.header.seqno; i++){
+        lock_guard<mutex> lock(vectorMutex);
+        buffer.push_back(make_pair("", false));
+      }
+
+      // Second, add data you received
+      string data = extract_data(datagram);
+      buffer.push_back(make_pair(data, true));
+
+
     } else { // Case 2: consecutive, add to output buffer
-      lock_guard<mutex> lock(queueMutex);
-      buffer.push(packet);
+      curr_seqno = datagram.header.seqno; // Update curr seqno
+      lock_guard<mutex> lock(vectorMutex);
+
+      string data = extract_data(datagram);
+
+      buffer.push_back(make_pair(data, true));
       dataCondition.notify_one();
+      // Edit the outstanding vector
+      for (auto it = NACK_packets.begin(); it != NACK_packets.end(); ) {
+          if (it->first < curr_seqno) {
+              // Erase returns the iterator to the next element
+              it = NACK_packets.erase(it);
+          } else {
+              // Only increment the iterator if no erasure happens
+              ++it;
+          }
+      }
     }
   }
 
@@ -86,19 +147,28 @@ private:
       // Convert to IPv4 Datagram
       parse(dgram, buf);
 
-      receive_packet(packet);
+      receive_packet(dgram);
     }
   }
 
 
+  void play_data(string& data){
+    // TODO: play the data
+  }
+
+  // TODO: Edit this to work with vector logic 
   void dataProcessor() {
     string data;
     while (true) {
-      unique_lock<mutex> lock(queueMutex);
-      dataCondition.wait(lock, []{ return !dataQueue.empty(); });
-      data = buffer.front();
-      buffer.pop();
-      // TODO: Play back the data
+      unique_lock<mutex> lock(vectorMutex);
+      dataCondition.wait(lock, []{ 
+        return !buffer.empty() && buffer.front().second == true; 
+      });
+
+      while (!buffer.empty() && buffer.front().second) {
+        play_data(buffer.front().first);
+        buffer.erase(buffer.begin());  // Remove the processed item from the vector
+      }
     }
   }
 

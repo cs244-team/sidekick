@@ -117,7 +117,8 @@ private:
 
   public:
 
-  // Add parameters
+  // Add parameters:
+  //    - RTT
   Server()
   {
 

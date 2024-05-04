@@ -29,11 +29,11 @@ private:
   static constexpr int PCAP_OPTIMIZE = 1;
 
   // Datagrams that have been filtered and parsed
-  std::shared_ptr<conqueue<IPv4Datagram>> _datagrams;
+  std::shared_ptr<conqueue<IPv4Datagram>> datagrams_;
 
   // libpcap state
-  pcap_t* _pcap_handler;
-  std::string _pcap_errbuf;
+  pcap_t* pcap_handle_;
+  std::string pcap_errbuf_;
 
   // Main packet callback function
   static void packet_handler( u_char* user, const struct pcap_pkthdr* pkthdr, const u_char* packet );
@@ -42,40 +42,40 @@ public:
   PacketSniffer( const std::string& interface );
   ~PacketSniffer()
   {
-    if ( _pcap_handler ) {
-      pcap_close( _pcap_handler );
+    if ( pcap_handle_ ) {
+      pcap_close( pcap_handle_ );
     }
   };
 
   std::thread run();
-  std::shared_ptr<conqueue<IPv4Datagram>> datagrams() { return _datagrams; }
+  std::shared_ptr<conqueue<IPv4Datagram>> datagrams() { return datagrams_; }
 };
 
 class SidekickSender
 {
 private:
   // Sender configuration
-  size_t _quacking_packet_interval {};
-  size_t _missing_packet_threshold {};
+  size_t quacking_packet_interval_;
+  size_t missing_packet_threshold_;
 
   // Datagrams captured by sniffer
-  std::shared_ptr<conqueue<IPv4Datagram>> _datagrams;
+  std::shared_ptr<conqueue<IPv4Datagram>> datagrams_;
 
   // quACK state mapped to sender IPv4 addresses
-  std::unordered_map<IPv4Address, Quack> _quacks {};
+  std::unordered_map<IPv4Address, Quack> quacks_ {};
 
   // Socket to send quACKs from proxy to sidekick receivers
-  UDPSocket _quacking_socket {};
+  UDPSocket quacking_socket_ {};
 
 public:
   SidekickSender( size_t quacking_packet_interval,
                   size_t missing_packet_threshold,
                   std::shared_ptr<conqueue<IPv4Datagram>> datagrams )
-    : _quacking_packet_interval( quacking_packet_interval )
-    , _missing_packet_threshold( missing_packet_threshold )
-    , _datagrams( datagrams )
+    : quacking_packet_interval_( quacking_packet_interval )
+    , missing_packet_threshold_( missing_packet_threshold )
+    , datagrams_( datagrams )
   {
-    _quacking_socket.bind( Address( "0.0.0.0", 0 ) );
+    quacking_socket_.bind( Address( "0.0.0.0", 0 ) );
   };
 
   std::thread run();

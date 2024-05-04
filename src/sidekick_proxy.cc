@@ -4,27 +4,27 @@
 
 PacketSniffer::PacketSniffer( const std::string& interface )
 {
-  _datagrams = std::make_shared<conqueue<IPv4Datagram>>();
-  _pcap_errbuf.resize( PCAP_ERRBUF_SIZE );
+  datagrams_ = std::make_shared<conqueue<IPv4Datagram>>();
+  pcap_errbuf_.resize( PCAP_ERRBUF_SIZE );
 
-  _pcap_handler = pcap_open_live( interface.c_str(), BUFSIZ, PCAP_PROMISC, PCAP_TIMEOUT, _pcap_errbuf.data() );
-  if ( _pcap_handler == NULL ) {
-    throw std::runtime_error( "pcap_open_live() failed: " + _pcap_errbuf );
+  pcap_handle_ = pcap_open_live( interface.c_str(), BUFSIZ, PCAP_PROMISC, PCAP_TIMEOUT, pcap_errbuf_.data() );
+  if ( pcap_handle_ == NULL ) {
+    throw std::runtime_error( "pcap_open_live() failed: " + pcap_errbuf_ );
   }
 
   // Only capture incoming packets
-  if ( pcap_setdirection( _pcap_handler, PCAP_D_IN ) < 0 ) {
+  if ( pcap_setdirection( pcap_handle_, PCAP_D_IN ) < 0 ) {
     throw std::runtime_error( "pcap_setdirection() failed" );
   }
 
   // Set filtering rules
   struct bpf_program bpf;
-  if ( pcap_compile( _pcap_handler, &bpf, PCAP_FILTER, PCAP_OPTIMIZE, 0 ) < 0 ) {
+  if ( pcap_compile( pcap_handle_, &bpf, PCAP_FILTER, PCAP_OPTIMIZE, 0 ) < 0 ) {
     throw std::runtime_error( "pcap_compile() failed" );
   }
 
   // Apply filter
-  if ( pcap_setfilter( _pcap_handler, &bpf ) == -1 ) {
+  if ( pcap_setfilter( pcap_handle_, &bpf ) == -1 ) {
     throw std::runtime_error( "pcap_setfilter() failed" );
   }
 }
@@ -32,7 +32,7 @@ PacketSniffer::PacketSniffer( const std::string& interface )
 std::thread PacketSniffer::run()
 {
   return std::thread( [&] {
-    if ( pcap_loop( _pcap_handler, 0, packet_handler, reinterpret_cast<u_char*>( this ) ) < 0 ) {
+    if ( pcap_loop( pcap_handle_, 0, packet_handler, reinterpret_cast<u_char*>( this ) ) < 0 ) {
       throw std::runtime_error( "pcap_loop() failed" );
     }
   } );
@@ -52,7 +52,7 @@ void PacketSniffer::packet_handler( u_char* user, const struct pcap_pkthdr* pkth
   }
 
   PacketSniffer* _this = reinterpret_cast<PacketSniffer*>( user );
-  _this->_datagrams->push( datagram );
+  _this->datagrams_->push( datagram );
 }
 
 std::thread SidekickSender::run()
@@ -60,7 +60,7 @@ std::thread SidekickSender::run()
   return std::thread( [&] {
     // Pull datagrams off the sniffer's queue
     while ( 1 ) {
-      IPv4Datagram datagram = _datagrams->pop();
+      IPv4Datagram datagram = datagrams_->pop();
       handle_datagram( datagram );
     }
   } );
@@ -84,18 +84,18 @@ void SidekickSender::handle_datagram( IPv4Datagram& datagram )
 
 void SidekickSender::update_quack( IPv4Address src_address, uint32_t packet_id )
 {
-  if ( _quacks.find( src_address ) == _quacks.end() ) {
-    _quacks.insert( { src_address, { 0, 0, _missing_packet_threshold } } );
+  if ( quacks_.find( src_address ) == quacks_.end() ) {
+    quacks_.insert( { src_address, { 0, 0, missing_packet_threshold_ } } );
   }
 
   // Update quacking state for this sender
-  auto& quack = _quacks[src_address];
+  auto& quack = quacks_[src_address];
   quack.num_received++;
   quack.last_received_id = packet_id;
   quack.power_sums.add( packet_id );
 
   // Send quack to sidekick receiver with the current state
-  if ( quack.num_received % _quacking_packet_interval == 0 ) {
+  if ( quack.num_received % quacking_packet_interval_ == 0 ) {
     Address dest( inet_ntoa( { htobe32( src_address ) } ), QUACK_LISTEN_PORT );
 
     std::cerr << "Sending quack to: " << dest.ip() << "\n"
@@ -106,7 +106,7 @@ void SidekickSender::update_quack( IPv4Address src_address, uint32_t packet_id )
 
     auto serialized_quack = serialize( quack );
     std::string payload = std::accumulate( serialized_quack.begin(), serialized_quack.end(), std::string {} );
-    _quacking_socket.sendto( payload, dest );
+    quacking_socket_.sendto( payload, dest );
   }
 }
 

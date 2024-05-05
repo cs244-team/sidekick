@@ -10,7 +10,9 @@
 #include <cstring> 
 #include <iostream> 
 #include <netinet/in.h> 
-#include <pair.h>
+#include <pair>
+#include <tuple>
+#include <algorithm>
 #include <unistd.h> 
 #include <condition_variable>
 #include "ipv4_datagram.hh"
@@ -40,7 +42,7 @@ private:
   int curr_seqno = 0; 
 
   // Maintain iterator 
-  vector<pair<string, bool>> buffer {}; // <data to play, can play>
+  vector<tuple<string, int, bool>> buffer {}; // <data to play, seqno, can play>
 
 
 
@@ -95,6 +97,7 @@ private:
 
     // TODO: Decrypt packet
 
+    // Probably not SYN per se but just need some notion of starting seqno 
     if ( message.SYN ) {
       curr_seqno = datagram.header.seqno;
     }
@@ -108,12 +111,12 @@ private:
       // First, add empty spots
       for(int i = curr_seqno+1; i < datagram.header.seqno; i++){
         lock_guard<mutex> lock(vectorMutex);
-        buffer.push_back(make_pair("", false));
+        buffer.push_back(make_tuple("", i, false));
       }
 
       // Second, add data you received
       string data = extract_data(datagram);
-      buffer.push_back(make_pair(data, true));
+      buffer.push_back(make_tuple(data, datagram.header.seqno, true));
 
 
     } else { // Case 2: consecutive, add to output buffer
@@ -122,7 +125,21 @@ private:
 
       string data = extract_data(datagram);
 
-      buffer.push_back(make_pair(data, true));
+
+      // TODO: this seems super inefficient to update the vector with placeholders but for now....
+      // Could probably keep a bool if you're waiting on data to skip over this call or something
+
+      auto it = std::find_if(buffer.begin(), buffer.end(), [curr_seqno](const std::tuple<std::string, int, std::string>& tup) {
+        return std::get<1>(tup) == curr_seqno;  // Check if the second element of the tuple is seqno
+      });
+
+      // If already in buffer because missing with NACK, update
+      if(it != buffer.end()){ 
+        it->first = data;
+        it->third = true;
+      } else{ // Else, push back
+        buffer.push_back(make_tuple(data, curr_seqno, true));
+      }
       dataCondition.notify_one();
       // Edit the outstanding vector
       for (auto it = NACK_packets.begin(); it != NACK_packets.end(); ) {
@@ -162,10 +179,10 @@ private:
     while (true) {
       unique_lock<mutex> lock(vectorMutex);
       dataCondition.wait(lock, []{ 
-        return !buffer.empty() && buffer.front().second == true; 
+        return !buffer.empty() && buffer.front().third == true; 
       });
 
-      while (!buffer.empty() && buffer.front().second) {
+      while (!buffer.empty() && buffer.front().third) {
         play_data(buffer.front().first);
         buffer.erase(buffer.begin());  // Remove the processed item from the vector
       }

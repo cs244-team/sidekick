@@ -58,15 +58,15 @@ public:
     }
 
     // Add this newly received packet
-    auto time = std::chrono::high_resolution_clock::now();
-    received_packets_[seqno] = { .received_at = time, .data = std::move( data ) };
+    time_point_t current_time = std::chrono::high_resolution_clock::now();
+    received_packets_[seqno] = { .received_at = current_time, .data = std::move( data ) };
     missing_seqnos_.erase( seqno );
 
     // Set packets' "playable_at" time, but don't block on inserting into outbound queue
     std::vector<std::string> playable_data;
     while ( received_packets_.find( next_unplayable_seqno_ ) != received_packets_.end() ) {
       auto& packet = received_packets_[next_unplayable_seqno_++];
-      packet.playable_at = std::chrono::high_resolution_clock::now();
+      packet.playable_at = current_time;
       playable_data.push_back( std::move( packet.data ) );
     }
 

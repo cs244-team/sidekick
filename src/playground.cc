@@ -71,7 +71,7 @@ void push_with_jitter( JitterBuffer& buf, uint32_t seqno )
   static std::mt19937_64 eng { std::random_device {}() };
   static std::uniform_int_distribution<> dist { 50, 200 };
   std::this_thread::sleep_for( std::chrono::milliseconds( dist( eng ) ) );
-  std::string audio;
+  std::string audio = "<audio data> at seqno " + std::to_string( seqno );
   buf.push( seqno, audio );
 }
 
@@ -94,6 +94,11 @@ void jitter_buffer()
     auto removed_time = packet.second.playable_at.value();
     auto ms = std::chrono::duration_cast<std::chrono::milliseconds>( removed_time - received_time );
     std::cout << "seqno: " << packet.first << ", de-jitter latency: " << ms.count() << " (ms)" << std::endl;
+  }
+
+  std::cout << "in-order playback:" << std::endl;
+  while ( 1 ) {
+    std::cout << buf.pop() << std::endl;
   }
 }
 

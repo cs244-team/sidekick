@@ -31,6 +31,8 @@ private:
   // Datagrams that have been filtered and parsed
   std::shared_ptr<conqueue<IPv4Datagram>> datagrams_;
 
+  std::string interface_;
+
   // libpcap state
   pcap_t* pcap_handle_;
   std::string pcap_errbuf_;
@@ -47,7 +49,7 @@ public:
     }
   };
 
-  std::thread run();
+  void run();
   std::shared_ptr<conqueue<IPv4Datagram>> datagrams() { return datagrams_; }
 };
 
@@ -78,7 +80,7 @@ public:
     quacking_socket_.bind( Address( "0.0.0.0", 0 ) );
   };
 
-  std::thread run();
+  void run();
   void handle_datagram( IPv4Datagram& datagram );
   void update_quack( IPv4Address src_address, uint32_t packet_id );
 };

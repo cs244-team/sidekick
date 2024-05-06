@@ -69,10 +69,7 @@ public:
       packet.playable_at = current_time;
       playable_data.push_back( std::move( packet.data ) );
     }
-
-    for ( auto& data : playable_data ) {
-      playback_queue_.push( data );
-    }
+    playback_queue_.push( playable_data );
   }
 
   std::string pop() { return playback_queue_.pop(); }

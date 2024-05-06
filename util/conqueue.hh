@@ -21,6 +21,15 @@ public:
     non_empty_cv_.notify_one();
   }
 
+  void push( std::vector<T>& items )
+  {
+    std::unique_lock lk( lock_ );
+    for ( auto item : items ) {
+      inner_.push( item );
+    }
+    non_empty_cv_.notify_one();
+  }
+
   T pop()
   {
     std::unique_lock lk( lock_ );

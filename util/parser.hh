@@ -257,5 +257,5 @@ T str_to_uint( std::string_view val )
     out <<= 8;
     out |= static_cast<T>( val[i] );
   }
-  return out;
+  return be32toh( out );
 }

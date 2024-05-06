@@ -4,7 +4,7 @@
 #include "crypto.hh"
 #include "parser.hh"
 
-static constexpr uint16_t SERVER_LISTEN_PORT = 9000;
+static constexpr uint16_t SERVER_DEFAULT_PORT = 9000;
 
 // Parse an encrypted WebRTC UDP packet
 // Encrypted format: nonce (24 bytes) | ciphertext

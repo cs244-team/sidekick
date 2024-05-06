@@ -49,12 +49,5 @@ std::optional<uint32_t> get_packet_id( std::string_view udp_payload )
   if ( udp_payload.length() < QUACK_ID_OFFSET + sizeof( uint32_t ) ) {
     return {};
   }
-
-  uint32_t id = 0;
-  for ( size_t i = 0; i < sizeof( id ); i++ ) {
-    id <<= 8;
-    id |= static_cast<uint32_t>( udp_payload[i + QUACK_ID_OFFSET] );
-  }
-
-  return id;
+  return str_to_uint<uint32_t>( udp_payload.substr( QUACK_ID_OFFSET ) );
 }

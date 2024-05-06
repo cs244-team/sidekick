@@ -11,8 +11,8 @@
 #include "conqueue.hh"
 #include "ipv4_datagram.hh"
 #include "parser.hh"
-#include "protocol.hh"
 #include "quack.hh"
+#include "sidekick_protocol.hh"
 #include "socket.hh"
 
 static constexpr size_t ETH_HDR_LEN = sizeof( struct ethhdr );

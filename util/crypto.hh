@@ -4,8 +4,8 @@
 
 #include <sodium.h>
 
-static constexpr size_t NONCE_SIZE = crypto_secretbox_NONCEBYTES;
-static constexpr size_t TAG_SIZE = crypto_secretbox_MACBYTES;
+constexpr size_t TAG_LEN = crypto_secretbox_MACBYTES;
+constexpr size_t NONCE_LEN = crypto_secretbox_NONCEBYTES;
 
 // Fixed encryption key
 static unsigned char key[]
@@ -33,11 +33,11 @@ std::pair<std::string, std::string> encrypt( std::string_view plaintext )
   }
 
   std::string nonce;
-  nonce.resize( NONCE_SIZE );
-  randombytes_buf( nonce.data(), NONCE_SIZE );
+  nonce.resize( NONCE_LEN );
+  randombytes_buf( nonce.data(), NONCE_LEN );
 
   std::string ciphertext;
-  ciphertext.resize( plaintext.length() + TAG_SIZE );
+  ciphertext.resize( plaintext.length() + TAG_LEN );
 
   unsigned char* ct_buf = reinterpret_cast<unsigned char*>( ciphertext.data() );
   const unsigned char* pt_buf = reinterpret_cast<const unsigned char*>( plaintext.data() );
@@ -53,13 +53,19 @@ std::optional<std::string> decrypt( std::string_view nonce, std::string_view cip
     throw std::runtime_error( "libsodium has not been initialized with crypto_init()" );
   }
 
+  // Not enough information (most likely an invalid ciphertext)
+  size_t ct_len = ciphertext.length();
+  if ( ct_len < TAG_LEN ) {
+    return {};
+  }
+
   std::string plaintext;
-  plaintext.resize( ciphertext.length() - TAG_SIZE );
+  plaintext.resize( ct_len - TAG_LEN );
 
   unsigned char* pt_buf = reinterpret_cast<unsigned char*>( plaintext.data() );
   const unsigned char* ct_buf = reinterpret_cast<const unsigned char*>( ciphertext.data() );
   const unsigned char* nonce_buf = reinterpret_cast<const unsigned char*>( nonce.data() );
-  if ( crypto_secretbox_open_easy( pt_buf, ct_buf, ciphertext.length(), nonce_buf, key ) != 0 ) {
+  if ( crypto_secretbox_open_easy( pt_buf, ct_buf, ct_len, nonce_buf, key ) != 0 ) {
     return {};
   }
 

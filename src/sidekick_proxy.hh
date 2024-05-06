@@ -22,8 +22,6 @@ static constexpr size_t UDP_HDR_LEN = sizeof( struct udphdr );
 class PacketSniffer
 {
 private:
-  // TODO: could add some more filtering here (e.g., ignore multicast destinations)?
-  static constexpr const char* PCAP_FILTER = "ip && udp";
   static constexpr int PCAP_PROMISC = 1;
   static constexpr int PCAP_TIMEOUT = -1;
   static constexpr int PCAP_OPTIMIZE = 1;
@@ -41,7 +39,10 @@ private:
   static void packet_handler( u_char* user, const struct pcap_pkthdr* pkthdr, const u_char* packet );
 
 public:
-  PacketSniffer( const std::string& interface );
+  static constexpr const char* DEFAULT_FILTER = "ip and udp";
+
+  PacketSniffer( const std::string& interface, const std::string& filter );
+
   ~PacketSniffer()
   {
     if ( pcap_handle_ ) {

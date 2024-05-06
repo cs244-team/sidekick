@@ -1,8 +1,9 @@
 #include <iostream>
 
+#include "cli11.hh"
 #include "sidekick_proxy.hh"
 
-PacketSniffer::PacketSniffer( const std::string& interface )
+PacketSniffer::PacketSniffer( const std::string& interface, const std::string& filter )
 {
   interface_ = interface;
   datagrams_ = std::make_shared<conqueue<IPv4Datagram>>();
@@ -20,7 +21,7 @@ PacketSniffer::PacketSniffer( const std::string& interface )
 
   // Set filtering rules
   struct bpf_program bpf;
-  if ( pcap_compile( pcap_handle_, &bpf, PCAP_FILTER, PCAP_OPTIMIZE, 0 ) < 0 ) {
+  if ( pcap_compile( pcap_handle_, &bpf, filter.data(), PCAP_OPTIMIZE, 0 ) < 0 ) {
     throw std::runtime_error( "pcap_compile() failed" );
   }
 
@@ -57,9 +58,7 @@ void PacketSniffer::packet_handler( u_char* user, const struct pcap_pkthdr* pkth
 
 void SidekickSender::run()
 {
-  std::cerr << "SidekickSender started, sending quacks every " << quacking_packet_interval_
-            << " packet(s) per client IP and tolerating " << missing_packet_threshold_ << " missing packets"
-            << std::endl;
+  std::cerr << "SidekickSender started" << std::endl;
 
   // Pull datagrams off the sniffer's queue
   while ( 1 ) {
@@ -114,20 +113,25 @@ void SidekickSender::update_quack( IPv4Address src_address, uint32_t packet_id )
 
 int main( int argc, char* argv[] )
 {
-  if ( argc != 4 ) {
-    std::cerr << "Usage: " << argv[0] << " <interface> <quacking_interval> <missing_packet_threshold>" << std::endl;
-    return EXIT_FAILURE;
-  }
+  CLI::App app;
 
-  std::string interface { argv[1] };
-  size_t quacking_interval = strtol( argv[2], nullptr, 0 );
-  size_t missing_packet_threshold = strtol( argv[3], nullptr, 0 );
+  std::string interface = "enp0s1";
+  std::string pcap_filter = PacketSniffer::DEFAULT_FILTER;
+  size_t quacking_interval = 2;
+  size_t missing_packet_threshold = 8;
 
-  PacketSniffer sniffer( interface );
+  app.add_option( "-i,--interface", interface, "Interface to sniff packets on" )->capture_default_str();
+  app.add_option( "-f,--filter", pcap_filter, "Packet sniffing filter" )->capture_default_str();
+  app.add_option( "-q,--quack", quacking_interval, "Send quACKs every q packets" )->capture_default_str();
+  app.add_option( "-t,--threshold", missing_packet_threshold, "Missing packet threshold" )->capture_default_str();
+
+  CLI11_PARSE( app, argc, argv );
+
+  PacketSniffer sniffer( interface, pcap_filter );
   SidekickSender sidekick( quacking_interval, missing_packet_threshold, sniffer.datagrams() );
 
-  std::thread sidekick_thread( &SidekickSender::run, sidekick );
-  std::thread sniffer_thread( &PacketSniffer::run, sniffer );
+  std::thread sidekick_thread( [&] { sidekick.run(); } );
+  std::thread sniffer_thread( [&] { sniffer.run(); } );
 
   sidekick_thread.join();
   sniffer_thread.join();

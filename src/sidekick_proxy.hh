@@ -19,7 +19,7 @@ static constexpr size_t ETH_HDR_LEN = sizeof( struct ethhdr );
 static constexpr size_t IP_HDR_LEN = sizeof( struct iphdr );
 static constexpr size_t UDP_HDR_LEN = sizeof( struct udphdr );
 
-class PacketSniffer
+class PacketCapture
 {
 private:
   static constexpr int PCAP_PROMISC = 1;
@@ -29,11 +29,9 @@ private:
   // Datagrams that have been filtered and parsed
   std::shared_ptr<conqueue<IPv4Datagram>> datagrams_;
 
+  // Interface name and opaque pcap pointer
   std::string interface_;
-
-  // libpcap state
   pcap_t* pcap_handle_;
-  std::string pcap_errbuf_;
 
   // Main packet callback function
   static void packet_handler( u_char* user, const struct pcap_pkthdr* pkthdr, const u_char* packet );
@@ -41,9 +39,9 @@ private:
 public:
   static constexpr const char* DEFAULT_FILTER = "ip and udp";
 
-  PacketSniffer( const std::string& interface, const std::string& filter );
+  PacketCapture( const std::string& interface, const std::string& filter );
 
-  ~PacketSniffer()
+  ~PacketCapture()
   {
     if ( pcap_handle_ ) {
       pcap_close( pcap_handle_ );
@@ -51,6 +49,7 @@ public:
   };
 
   void run();
+  
   std::shared_ptr<conqueue<IPv4Datagram>> datagrams() { return datagrams_; }
 };
 

@@ -3,15 +3,16 @@
 #include "cli11.hh"
 #include "sidekick_proxy.hh"
 
-PacketSniffer::PacketSniffer( const std::string& interface, const std::string& filter )
+PacketCapture::PacketCapture( const std::string& interface, const std::string& filter )
 {
   interface_ = interface;
   datagrams_ = std::make_shared<conqueue<IPv4Datagram>>();
 
-  pcap_errbuf_.resize( PCAP_ERRBUF_SIZE );
-  pcap_handle_ = pcap_open_live( interface.c_str(), BUFSIZ, PCAP_PROMISC, PCAP_TIMEOUT, pcap_errbuf_.data() );
+  std::string errbuf;
+  errbuf.resize( PCAP_ERRBUF_SIZE );
+  pcap_handle_ = pcap_open_live( interface.c_str(), BUFSIZ, PCAP_PROMISC, PCAP_TIMEOUT, errbuf.data() );
   if ( pcap_handle_ == NULL ) {
-    throw std::runtime_error( "pcap_open_live() failed: " + pcap_errbuf_ );
+    throw std::runtime_error( "pcap_open_live() failed: " + errbuf );
   }
 
   // Only capture incoming packets
@@ -31,7 +32,7 @@ PacketSniffer::PacketSniffer( const std::string& interface, const std::string& f
   }
 }
 
-void PacketSniffer::run()
+void PacketCapture::run()
 {
   std::cerr << "PacketSniffer started, sniffing on interface " << interface_ << std::endl;
   if ( pcap_loop( pcap_handle_, 0, packet_handler, reinterpret_cast<u_char*>( this ) ) < 0 ) {
@@ -39,7 +40,7 @@ void PacketSniffer::run()
   }
 }
 
-void PacketSniffer::packet_handler( u_char* user, const struct pcap_pkthdr* pkthdr, const u_char* packet )
+void PacketCapture::packet_handler( u_char* user, const struct pcap_pkthdr* pkthdr, const u_char* packet )
 {
   if ( pkthdr->caplen < ETH_HDR_LEN + IP_HDR_LEN ) {
     return;
@@ -52,7 +53,7 @@ void PacketSniffer::packet_handler( u_char* user, const struct pcap_pkthdr* pkth
     return;
   }
 
-  PacketSniffer* _this = reinterpret_cast<PacketSniffer*>( user );
+  PacketCapture* _this = reinterpret_cast<PacketCapture*>( user );
   _this->datagrams_->push( datagram );
 }
 
@@ -116,7 +117,7 @@ int main( int argc, char* argv[] )
   CLI::App app;
 
   std::string interface = "enp0s1";
-  std::string pcap_filter = PacketSniffer::DEFAULT_FILTER;
+  std::string pcap_filter = PacketCapture::DEFAULT_FILTER;
   size_t quacking_interval = 2;
   size_t missing_packet_threshold = 8;
 
@@ -127,14 +128,14 @@ int main( int argc, char* argv[] )
 
   CLI11_PARSE( app, argc, argv );
 
-  PacketSniffer sniffer( interface, pcap_filter );
-  SidekickSender sidekick( quacking_interval, missing_packet_threshold, sniffer.datagrams() );
+  PacketCapture capture( interface, pcap_filter );
+  SidekickSender sidekick( quacking_interval, missing_packet_threshold, capture.datagrams() );
 
   std::thread sidekick_thread( [&] { sidekick.run(); } );
-  std::thread sniffer_thread( [&] { sniffer.run(); } );
+  std::thread capture_thread( [&] { capture.run(); } );
 
   sidekick_thread.join();
-  sniffer_thread.join();
+  capture_thread.join();
 
   return EXIT_SUCCESS;
 }

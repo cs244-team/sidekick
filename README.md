@@ -19,3 +19,5 @@ Then, you can try out the playground app with
 ```
 ./build/src/playground
 ```
+
+To install the cryptography library we use, please see: https://libsodium.gitbook.io/doc/installation

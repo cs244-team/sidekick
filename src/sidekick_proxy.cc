@@ -1,145 +1,136 @@
 #include <iostream>
-#include <memory>
-#include <string>
-#include <thread>
-#include <unordered_map>
 
-#include <linux/if_ether.h>
-#include <linux/ip.h>
-#include <linux/udp.h>
-#include <pcap/pcap.h>
+#include "sidekick_proxy.hh"
 
-#include "address.hh"
-#include "conqueue.hh"
-#include "ipv4_datagram.hh"
-#include "parser.hh"
-#include "quack.hh"
-
-class PacketSniffer
+PacketSniffer::PacketSniffer( const std::string& interface )
 {
-private:
-  static constexpr int PCAP_PROMISC = 1;
-  static constexpr int PCAP_TIMEOUT = 1000;
-  static constexpr size_t IP_HEADER_LEN = sizeof( struct iphdr );
-  static constexpr size_t ETH_HEADER_LEN = sizeof( struct ethhdr );
+  interface_ = interface;
+  datagrams_ = std::make_shared<conqueue<IPv4Datagram>>();
 
-  // Datagrams that have been filtered and parsed
-  std::shared_ptr<conqueue<IPv4Datagram>> _datagrams;
-
-  // libpcap state
-  pcap_t* _pcap_handler;
-  std::string _pcap_errbuf;
-
-  // Main packet callback function
-  static void packet_handler( u_char* user, const struct pcap_pkthdr* pkthdr, const u_char* packet )
-  {
-    if ( pkthdr->caplen < ETH_HEADER_LEN + IP_HEADER_LEN ) {
-      return;
-    }
-
-    IPv4Datagram datagram;
-    std::string data( reinterpret_cast<const char*>( packet ) + ETH_HEADER_LEN, pkthdr->caplen );
-    if ( !parse( datagram, { data } ) ) {
-      std::cerr << "Unable to parse IPv4Datagram" << std::endl;
-      return;
-    }
-
-    PacketSniffer* _this = reinterpret_cast<PacketSniffer*>( user );
-    _this->_datagrams->push( datagram );
+  pcap_errbuf_.resize( PCAP_ERRBUF_SIZE );
+  pcap_handle_ = pcap_open_live( interface.c_str(), BUFSIZ, PCAP_PROMISC, PCAP_TIMEOUT, pcap_errbuf_.data() );
+  if ( pcap_handle_ == NULL ) {
+    throw std::runtime_error( "pcap_open_live() failed: " + pcap_errbuf_ );
   }
 
-public:
-  PacketSniffer( std::string& interface, std::string& filter )
-  {
-    _datagrams = std::make_shared<conqueue<IPv4Datagram>>();
-    _pcap_errbuf.resize( PCAP_ERRBUF_SIZE );
-
-    _pcap_handler = pcap_open_live( interface.c_str(), BUFSIZ, PCAP_PROMISC, PCAP_TIMEOUT, _pcap_errbuf.data() );
-    if ( _pcap_handler == NULL ) {
-      throw std::runtime_error( "pcap_open_live() failed: " + _pcap_errbuf );
-    }
-
-    // Only capture incoming packets
-    // TODO: still has a problem, how do we ignore packets coming back from WebRTC server?
-    if ( pcap_setdirection( _pcap_handler, PCAP_D_IN ) < 0 ) {
-      throw std::runtime_error( "pcap_setdirection() failed" );
-    }
-
-    // Set filtering rules
-    struct bpf_program bpf;
-    if ( pcap_compile( _pcap_handler, &bpf, filter.c_str(), 1, 0 ) < 0 ) {
-      throw std::runtime_error( "pcap_compile() failed" );
-    }
-
-    // Apply filter
-    if ( pcap_setfilter( _pcap_handler, &bpf ) == -1 ) {
-      throw std::runtime_error( "pcap_setfilter() failed" );
-    }
+  // Only capture incoming packets
+  if ( pcap_setdirection( pcap_handle_, PCAP_D_IN ) < 0 ) {
+    throw std::runtime_error( "pcap_setdirection() failed" );
   }
 
-  ~PacketSniffer()
-  {
-    if ( _pcap_handler ) {
-      pcap_close( _pcap_handler );
-    }
+  // Set filtering rules
+  struct bpf_program bpf;
+  if ( pcap_compile( pcap_handle_, &bpf, PCAP_FILTER, PCAP_OPTIMIZE, 0 ) < 0 ) {
+    throw std::runtime_error( "pcap_compile() failed" );
   }
 
-  // Start a new sniffing thread
-  std::thread start_capture()
-  {
-    return std::thread( [&] {
-      if ( pcap_loop( _pcap_handler, 0, packet_handler, reinterpret_cast<u_char*>( this ) ) < 0 ) {
-        throw std::runtime_error( "pcap_loop() failed" );
-      }
-    } );
+  // Apply filter
+  if ( pcap_setfilter( pcap_handle_, &bpf ) == -1 ) {
+    throw std::runtime_error( "pcap_setfilter() failed" );
   }
+}
 
-  std::shared_ptr<conqueue<IPv4Datagram>> datagrams() { return _datagrams; }
-};
-
-class SidekickSender
+void PacketSniffer::run()
 {
-private:
-  std::shared_ptr<conqueue<IPv4Datagram>> _datagrams;
-  // std::unordered_map<Address, PowerSums> _quacks {};
+  std::cerr << "PacketSniffer started, sniffing on interface " << interface_ << std::endl;
+  if ( pcap_loop( pcap_handle_, 0, packet_handler, reinterpret_cast<u_char*>( this ) ) < 0 ) {
+    throw std::runtime_error( "pcap_loop() failed" );
+  }
+}
 
-public:
-  SidekickSender( std::shared_ptr<conqueue<IPv4Datagram>> queue ) : _datagrams( queue ) {};
-
-  std::thread start_quacking()
-  {
-    return std::thread( [&] {
-      // Pull datagrams off the sniffer's queue
-      while ( 1 ) {
-        IPv4Datagram datagram = _datagrams->pop();
-        handle_datagram( datagram );
-      }
-    } );
+void PacketSniffer::packet_handler( u_char* user, const struct pcap_pkthdr* pkthdr, const u_char* packet )
+{
+  if ( pkthdr->caplen < ETH_HDR_LEN + IP_HDR_LEN ) {
+    return;
   }
 
-  void handle_datagram( IPv4Datagram& datagram )
-  {
-    std::cout << datagram.header.to_string() << std::endl;
-    // TODO: capture "packet IDs" from UDP payload, at a specific offset
-    // If the payload is encrypted, then we just take the 4 bytes at a pre-determined offset
-    // Otherwise, we need to hash the bytes ourselves.
-    // Maybe make no assumptions about underyling protocol and just hash anyways?
+  IPv4Datagram datagram;
+  std::string data( reinterpret_cast<const char*>( packet ) + ETH_HDR_LEN, pkthdr->caplen - ETH_HDR_LEN );
+  if ( !parse( datagram, { data } ) ) {
+    std::cerr << "Unable to parse IPv4Datagram" << std::endl;
+    return;
   }
-};
+
+  PacketSniffer* _this = reinterpret_cast<PacketSniffer*>( user );
+  _this->datagrams_->push( datagram );
+}
+
+void SidekickSender::run()
+{
+  std::cerr << "SidekickSender started, sending quacks every " << quacking_packet_interval_
+            << " packet(s) per client IP and tolerating " << missing_packet_threshold_ << " missing packets"
+            << std::endl;
+
+  // Pull datagrams off the sniffer's queue
+  while ( 1 ) {
+    IPv4Datagram datagram = datagrams_->pop();
+    handle_datagram( datagram );
+  }
+}
+
+void SidekickSender::handle_datagram( IPv4Datagram& datagram )
+{
+  // We only support UDP protocols for this replication study
+  if ( datagram.header.proto != IPPROTO_UDP ) {
+    std::cerr << "Received datagram: " << datagram.header.to_string() << std::endl;
+    return;
+  }
+
+  // Retrieve packet id from specific offset in UDP payload as determined by the sidekick protocol
+  std::string ip_payload = std::accumulate( datagram.payload.begin(), datagram.payload.end(), std::string {} );
+  auto packet_id = get_packet_id( std::string_view( ip_payload ).substr( UDP_HDR_LEN ) );
+  if ( packet_id.has_value() ) {
+    update_quack( datagram.header.src, packet_id.value() );
+  }
+}
+
+void SidekickSender::update_quack( IPv4Address src_address, uint32_t packet_id )
+{
+  if ( quacks_.find( src_address ) == quacks_.end() ) {
+    quacks_.insert( { src_address, { 0, 0, missing_packet_threshold_ } } );
+  }
+
+  // Update quacking state for this sender
+  auto& quack = quacks_[src_address];
+  quack.num_received++;
+  quack.last_received_id = packet_id;
+  quack.power_sums.add( packet_id );
+
+  // Send quack to sidekick receiver with the current state
+  if ( quack.num_received % quacking_packet_interval_ == 0 ) {
+    Address dest( inet_ntoa( { htobe32( src_address ) } ), QUACK_LISTEN_PORT );
+
+    std::cerr << "Sending quack to: " << dest.ip() << ":" << dest.port() << "\n"
+              << "num_received: " << quack.num_received << "\n"
+              << "last_received_id: " << quack.last_received_id << "\n"
+              << "power_sums: " << quack.power_sums << "\n"
+              << std::endl;
+
+    auto serialized_quack = serialize( quack );
+    std::string payload = std::accumulate( serialized_quack.begin(), serialized_quack.end(), std::string {} );
+    quacking_socket_.sendto( payload, dest );
+  }
+}
 
 int main( int argc, char* argv[] )
 {
-  std::string interface = "enp0s1"; // get from args
-  std::string filter = "ip && udp"; // IPv4 and UDP packets
+  if ( argc != 4 ) {
+    std::cerr << "Usage: " << argv[0] << " <interface> <quacking_interval> <missing_packet_threshold>" << std::endl;
+    return EXIT_FAILURE;
+  }
 
-  PacketSniffer sniffer( interface, filter );
-  SidekickSender sidekick( sniffer.datagrams() );
+  std::string interface { argv[1] };
+  size_t quacking_interval = strtol( argv[2], nullptr, 0 );
+  size_t missing_packet_threshold = strtol( argv[3], nullptr, 0 );
 
-  std::thread sidekick_thread = sidekick.start_quacking();
-  std::thread sniffer_thread = sniffer.start_capture();
+  PacketSniffer sniffer( interface );
+  SidekickSender sidekick( quacking_interval, missing_packet_threshold, sniffer.datagrams() );
+
+  std::thread sidekick_thread( &SidekickSender::run, sidekick );
+  std::thread sniffer_thread( &PacketSniffer::run, sniffer );
 
   sidekick_thread.join();
   sniffer_thread.join();
 
-  return 0;
+  return EXIT_SUCCESS;
 }

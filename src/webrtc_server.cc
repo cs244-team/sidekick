@@ -15,8 +15,9 @@
 #include <algorithm>
 #include <unistd.h> 
 #include <condition_variable>
-#include "ipv4_datagram.hh"
-#include "tcp_receiver_message.hh"
+#include "ipv4_datagram.h"
+#include "tcp_receiver_message.h"
+#include "jitter_buffer.h"
 
 // draw this whole thing up and make it like a diagram and build it like legos
 
@@ -41,8 +42,6 @@ private:
 
   int curr_seqno = 0; 
 
-  // Maintain iterator 
-  vector<tuple<string, int, bool>> buffer {}; // <data to play, seqno, can play>
 
 
 
@@ -102,11 +101,14 @@ private:
       curr_seqno = datagram.header.seqno;
     }
 
+    buffer.push(datagram.header.seqno, IPv4Datagram::parse(datagram.payload));
+
     // Case 1: nonconsecutive, send NACK back to client containing seqno of each missing packet
     if datagram.header.seqno != curr_seqno + 1{ // Probably > curr_seqno
       send_NACK(datagram.header.seqno); 
       
       // Update buffer
+      
 
       // First, add empty spots
       for(int i = curr_seqno+1; i < datagram.header.seqno; i++){
@@ -206,6 +208,8 @@ private:
 
   // Add parameters:
   //    - RTT
+  JitterBuffer buffer {};
+
   Server()
   {
 

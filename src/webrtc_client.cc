@@ -15,6 +15,7 @@
 #include "ipv4_datagram.hh"
 #include "tcp_receiver_message.hh"
 #include "address.hh"
+#include "audio_buffer.hh"
 
 using namespace std;
 
@@ -48,7 +49,7 @@ private:
   unordered_map<uint32_t, Packet> outstanding_dgrams {};
 
 
-  queue<IPv4Datagram> audio_samples {};
+  AudioBuffer buffer {};
 
 
   void retransmit(string payload, uint32_t seqno){
@@ -59,7 +60,7 @@ private:
   }
 
   void send_packet(){
-    string data = audio_samples.pop(); // FILL OUT AUDIO SAMPLES
+    string data = buffer.pop(); 
 
     auto [nonce, ct] = encrypt(uint_to_str(seqno) + data);
     outstanding_dgrams[seqno] = nonce + ct;
@@ -87,8 +88,8 @@ private:
 
 
 public:
-  WebRTCClient(uint16_t protocol_port, uint16_t quack_port) : protocol_port(protocol_port), 
-  quack_port(quack_port), seqno(0)
+  WebRTCClient(uint16_t protocol_port, uint16_t quack_port, AudioBuffer buf) : protocol_port(protocol_port), 
+  quack_port(quack_port), seqno(0), buffer(buf)
   {
     clientSocket.bind( Address("0.0.0.0", client_port) ); 
     quackSocket.bind( Address("0.0.0.0", quack_port) );
@@ -103,7 +104,9 @@ int main( int argc, char* argv[] )
   uint16_t protocol_port = CLIENT_PROTOCOL_DEFAULT_PORT;
   uint16_t quack_port = CLIENT_QUACK_DEFAULT_PORT;
 
-  WebRTCClient client(protocol_port, quack_port);
+  AudioBuffer buffer = {}; // FILL IN AUDIO BUFFER
+
+  WebRTCClient client(protocol_port, quack_port, buffer);
 
   thread nack_thread ( [&] { client.receive_NACK(); } );
   thread send_thread ( [&] { client.send_packet(); } );

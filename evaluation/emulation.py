@@ -69,14 +69,16 @@ def configure_network(network: Mininet):
 
 def run_commands(network: Mininet):
     client, router, server = network["client"], network["router"], network["server"]
-    # run_webrtc_client(node=client)
+    run_webrtc_client(node=client, server_ip=server.IP())
     run_sidekick_proxy(node=router, interface="router-eth0")
     run_webrtc_server(node=server, rtt=2 * (L1_DELAY + L2_DELAY))
 
     CLI(network)
 
 
-def run_webrtc_client(node): ...
+def run_webrtc_client(node, server_ip):
+    cmd = f"{EXEC_DIR}/webrtc_client --server-ip {server_ip} > ./logs/webrtc_client.log 2>&1 &"
+    return node.cmd(cmd)
 
 
 def run_sidekick_proxy(node, interface, quacking_interval=2, threshold=8):
@@ -100,12 +102,12 @@ def run_test():
     network = Mininet(topo=topo)
 
     configure_network(network)
-    network.pingAll()
+    # network.pingAll()
     network.start()
     run_commands(network)
     network.stop()
 
 
 if __name__ == "__main__":
-    setLogLevel("info")
+    # setLogLevel("info")
     run_test()

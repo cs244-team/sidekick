@@ -22,4 +22,6 @@ public:
 
     void add_sample(string data){ buffer.push(data); }
 
-}
+    bool is_empty(){ return buffer.empty(); }
+
+};

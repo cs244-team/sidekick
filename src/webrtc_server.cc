@@ -44,7 +44,7 @@ public:
 
       auto [seqno, data] = parse_result.value();
       std::cerr << "Received data from: " << client_address.ip() << ":" << client_address.port()
-                << ", seqno: " << seqno << ", length: " << data.length() << std::endl;
+                << ", seqno: " << seqno << ", data: " << data << std::endl;
 
       // Insert into jitter buffer
       buffer_.push( seqno, data );
@@ -57,7 +57,7 @@ public:
         if ( rtt_ < duration_cast<milliseconds>( now - last_nack ).count() ) {
           std::cerr << "Sending NACK for seqno: " << missing_seqno.first << std::endl;
 
-          auto [nonce, ct] = encrypt( uint_to_str( missing_seqno.first ) );
+          auto [nonce, ct] = encrypt( uint_to_str( seqno ) );
           socket_.sendto( nonce + ct, client_address );
 
           // Update this seqno's last NACK'ed time
@@ -71,8 +71,10 @@ public:
   void play()
   {
     std::cerr << "WebRTCServer playback thread started" << std::endl;
+
     while ( 1 ) {
-      buffer_.pop();
+      std::string data = buffer_.pop();
+      std::cout << "Playback thread received: " << data << std::endl;
     }
   }
 };
@@ -83,8 +85,6 @@ int main( int argc, char* argv[] )
 
   uint64_t rtt = 150;
   uint16_t port = SERVER_DEFAULT_PORT;
-
-  std::cerr << "Hit!" << std::endl;
 
   app.add_option( "-r,--rtt", rtt, "Estimated RTT between client and server (ms)" )->capture_default_str();
   app.add_option( "-p,--port", port, "Port to listen on" )->capture_default_str();

@@ -9,15 +9,19 @@
 #include <iostream> 
 #include <netinet/in.h> 
 #include <unistd.h> 
-#include <vector.h>
-#include <map.h>
+#include <vector>
+#include <fstream>
+#include <map>
 #include <condition_variable>
 #include "ipv4_datagram.hh"
-#include "tcp_receiver_message.hh"
 #include "address.hh"
 #include "audio_buffer.hh"
+#include "cli11.hh"
+#include "jitter_buffer.hh"
+#include "socket.hh"
+#include "webrtc_protocol.hh"
 
-using namespace std;
+//using namespace std;
 
 
 class WebRTCClient{
@@ -26,14 +30,14 @@ private:
 
   struct EncryptedPacket
   {
-    string_view nonce;
-    string_view ciphertext;
+    std::string nonce;
+    std::string ciphertext;
   };
 
   struct PlaintextPacket
   {
     uint32_t seqno;
-    string_view data;
+    std::string data;
   };
 
   UDPSocket clientSocket {}; 
@@ -46,7 +50,7 @@ private:
   uint32_t seqno {};
 
 
-  unordered_map<uint32_t, Packet> outstanding_dgrams {};
+  std::unordered_map<uint32_t, Packet> outstanding_dgrams {};
 
 
   AudioBuffer buffer {};
@@ -60,7 +64,7 @@ private:
   }
 
   void send_packet(){
-    string data = buffer.pop(); 
+    std::string data = buffer.pop(); 
 
     auto [nonce, ct] = encrypt(uint_to_str(seqno) + data);
     outstanding_dgrams[seqno] = nonce + ct;
@@ -71,7 +75,7 @@ private:
 
   // Listening thread
   void receive_NACK(){
-    string payload;
+    std::string payload;
     serverAddress = serverSocket.recvfrom(payload);
 
     // Try to parse encrypted WebRTC data
@@ -99,17 +103,26 @@ public:
 
 int main( int argc, char* argv[] )
 {
-  crypto_init();
 
-  uint16_t protocol_port = CLIENT_PROTOCOL_DEFAULT_PORT;
+  CLI::App app;
+
+  uint16_t client_port = CLIENT_PROTOCOL_DEFAULT_PORT;
   uint16_t quack_port = CLIENT_QUACK_DEFAULT_PORT;
+
+  app.add_option( "-qp,--quack-port", quack_port, "Port to send from client to proxy" )->capture_default_str();
+  app.add_option( "-cp,--client-port", client_port, "Port to send from client to server" )->capture_default_str();
 
   AudioBuffer buffer = {}; // FILL IN AUDIO BUFFER
 
+  CLI11_PARSE( app, argc, argv );
+
+  crypto_init();
+
+
   WebRTCClient client(protocol_port, quack_port, buffer);
 
-  thread nack_thread ( [&] { client.receive_NACK(); } );
-  thread send_thread ( [&] { client.send_packet(); } );
+  std::thread nack_thread ( [&] { client.receive_NACK(); } );
+  std::thread send_thread ( [&] { client.send_packet(); } );
 
   nack_thread.join();
   send_thread.join();

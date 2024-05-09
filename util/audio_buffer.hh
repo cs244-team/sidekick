@@ -14,7 +14,11 @@ private:
 public:
     AudioBuffer() {}
 
-    string pop(){ return buffer.pop(); }
+    string pop(){ 
+        string sample = buffer.front();
+        buffer.pop(); 
+        return sample;
+    }
 
     void add_sample(string data){ buffer.push(data); }
 

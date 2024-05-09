@@ -84,6 +84,8 @@ int main( int argc, char* argv[] )
   uint64_t rtt = 150;
   uint16_t port = SERVER_DEFAULT_PORT;
 
+  std::cerr << "Hit!" << std::endl;
+
   app.add_option( "-r,--rtt", rtt, "Estimated RTT between client and server (ms)" )->capture_default_str();
   app.add_option( "-p,--port", port, "Port to listen on" )->capture_default_str();
 

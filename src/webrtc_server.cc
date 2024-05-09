@@ -71,10 +71,8 @@ public:
   void play()
   {
     std::cerr << "WebRTCServer playback thread started" << std::endl;
-
     while ( 1 ) {
-      std::string data = buffer_.pop();
-      std::cout << "Playback thread received: " << data << std::endl;
+      buffer_.pop();
     }
   }
 };

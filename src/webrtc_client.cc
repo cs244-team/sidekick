@@ -39,14 +39,17 @@ private:
 
   uint32_t seqno {};
 
-
-  unordered_map<uint32_t, std::string> outstanding_dgrams {};
-
-
-  AudioBuffer buffer {};
+  std::mutex buffer_mutex {};
+  std::condition_variable buffer_cv {};
 
 
-  void retransmit(string payload, uint32_t seqno){
+  std::unordered_map<uint32_t, std::string> outstanding_dgrams {};
+
+
+  AudioBuffer& buffer;
+
+
+  void retransmit(std::string payload, uint32_t seqno){
 
     std::cerr << "Retransmitting packet for seqno: " << seqno << std::endl;
 
@@ -58,7 +61,7 @@ private:
 
 
 public:
-  WebRTCClient(uint16_t client_port, uint16_t quack_port, AudioBuffer buf, string ip_addr) : client_port(client_port), 
+  WebRTCClient(uint16_t client_port, uint16_t quack_port, AudioBuffer& buf, std::string ip_addr) : client_port(client_port), 
   quack_port(quack_port), seqno(0), buffer(buf), serverAddress(Address(ip_addr, SERVER_DEFAULT_PORT))
   {
     clientSocket.bind( Address("0.0.0.0", client_port) ); 
@@ -87,8 +90,15 @@ public:
   }
 
   void send_packet(){
-    while(!buffer.is_empty()){
-      std::string data = buffer.pop(); 
+    while(true){
+      std::string data; 
+
+      {
+        std::unique_lock<std::mutex> lock(buffer_mutex);  // Assume you have a std::mutex buffer_mutex;
+        buffer_cv.wait(lock, [&]{ return !buffer.is_empty(); });  // buffer_cv is std::condition_variable
+        data = buffer.pop();
+      }
+      std::cout << "Data: " << data << std::endl;
 
       auto [nonce, ct] = encrypt(uint_to_str(seqno) + data);
       outstanding_dgrams[seqno] = nonce + ct;
@@ -107,24 +117,17 @@ int main( int argc, char* argv[] )
 
   uint16_t client_port = CLIENT_PROTOCOL_DEFAULT_PORT;
   uint16_t quack_port = CLIENT_QUACK_DEFAULT_PORT;
+  std::string filePath = "";
 
   std::string server_ip = "127.0.0.1";
-
-  //Address server_address = Address( "127.0.0.1", SERVER_DEFAULT_PORT ); 
 
   app.add_option( "-q,--quack-port", quack_port, "Port to send from client to proxy" )->capture_default_str();
   app.add_option( "-c,--client-port", client_port, "Port to send from client to server" )->capture_default_str();
   app.add_option( "-s,--server-address", server_ip, "IP address of server" )->capture_default_str(); 
+  app.add_option( "-p,--path", filePath, "Path to Audio Samples" )->capture_default_str(); 
 
-  AudioBuffer buffer = {}; // FILL IN AUDIO BUFFER
+  AudioBuffer buffer;
   
-
-  // Test buffer
-  string test = "abcdefghijklm";
-  for(int i = 0; i < 10; i++){
-    buffer.add_sample(std::to_string(i));
-  }
-
   CLI11_PARSE( app, argc, argv );
 
   crypto_init();
@@ -132,11 +135,20 @@ int main( int argc, char* argv[] )
 
   WebRTCClient client(client_port, quack_port, buffer, server_ip);
 
+  // To test this, drag a wav file into util and replace the lines below with that filename
+
+  // AudioBuffer::wav_to_pcm("/home/cs244/Desktop/cs244/sidekick/util/3435.wav", "/home/cs244/Desktop/cs244/sidekick/util/3435.pcm");
+  // filePath = "/home/cs244/Desktop/cs244/sidekick/util/3435.pcm";
+
+  std::thread sampleThread([&buffer, &filePath]() { buffer.load_samples(filePath); });
+
   std::thread nack_thread ( [&] { client.receive_NACK(); } );
   std::thread send_thread ( [&] { client.send_packet(); } );
+  
 
   nack_thread.join();
   send_thread.join();
+  sampleThread.join();
 
   return EXIT_SUCCESS;
 }

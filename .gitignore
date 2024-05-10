@@ -40,3 +40,5 @@
 /.vscode
 build
 libsodium-stable
+util/samples.bin
+3435.*

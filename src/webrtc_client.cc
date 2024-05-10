@@ -36,6 +36,12 @@ private:
   // Mapping between sequence numbers and encrypted packets (TODO: maybe clear these out after X seconds?)
   std::unordered_map<uint32_t, std::string> sent_data_ {};
 
+  // retransmit() is called by nack_thread which reads from `sent_data_` and send_packets() writes to `sent_data_`
+  // from the sender thread
+  //
+  // TODO: once we figure out how SidekickReceiver interacts with this client, we may need to guard that access too
+  std::shared_mutex sent_data_rw_lock_ {};
+
   // Mapping between opaque quack (packet) identifiers and seqnos
   std::unordered_map<uint32_t, uint32_t> opaque_ids_to_seqnos_ {};
 
@@ -45,7 +51,7 @@ private:
   // Retransmit a packet based on its sequence number
   void retransmit( uint32_t seqno )
   {
-    std::cerr << "Retransmitting packet for seqno: " << seqno << std::endl;
+    std::shared_lock lk( sent_data_rw_lock_ );
     client_socket_.sendto( sent_data_[seqno], webrtc_server_address_ );
   }
 
@@ -110,10 +116,22 @@ public:
       opaque_ids_to_seqnos_[packet_id.value()] = next_seqno_;
 
       // Keep track of this payload for future retransmission, if necessary
+      std::unique_lock lk( sent_data_rw_lock_ );
       sent_data_[next_seqno_++] = payload;
+      lk.unlock();
 
       client_socket_.sendto( payload, webrtc_server_address_ );
     }
+  }
+
+  // TODO(Hari): this is the simplest interface I could think of for the SidekickReceiver to tell this client to
+  // retransmit a packet
+  void retransmit_opaque_id( uint32_t id )
+  {
+    // TODO: lookup corresponding seqno in opaque_ids_to_seqnos_ (also may need to protect this if SidekickReceiver
+    // is calling this method), against send_packets()'s write
+    // TODO: call retransmit( seqno )
+    return;
   }
 };
 

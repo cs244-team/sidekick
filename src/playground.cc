@@ -78,13 +78,21 @@ void push_with_jitter( JitterBuffer& buf, uint32_t seqno )
 void jitter_buffer()
 {
   JitterBuffer buf;
+
+  std::thread playback_thread( [&] {
+    while ( 1 ) {
+      std::cout << buf.pop() << std::endl;
+    }
+  } );
+
   push_with_jitter( buf, 3 );
   push_with_jitter( buf, 4 );
   push_with_jitter( buf, 2 );
   push_with_jitter( buf, 1 );
+  push_with_jitter( buf, 0 );
   push_with_jitter( buf, 6 );
   push_with_jitter( buf, 5 );
-  push_with_jitter( buf, 0 );
+  
 
   for ( auto& packet : buf.received_packets() ) {
     if ( !packet.second.playable_at.has_value() ) {
@@ -96,10 +104,7 @@ void jitter_buffer()
     std::cout << "seqno: " << packet.first << ", de-jitter latency: " << ms.count() << " (ms)" << std::endl;
   }
 
-  std::cout << "in-order playback:" << std::endl;
-  while ( 1 ) {
-    std::cout << buf.pop() << std::endl;
-  }
+  playback_thread.join();
 }
 
 int main()

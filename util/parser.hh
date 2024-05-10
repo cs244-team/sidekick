@@ -237,3 +237,25 @@ bool parse( T& obj, const std::vector<std::string>& buffers, Targs&&... Fargs )
   obj.parse( p, std::forward<Targs>( Fargs )... );
   return not p.has_error();
 }
+
+template<std::unsigned_integral T>
+std::string uint_to_str( const T val )
+{
+  std::string out;
+  uint32_t be = htobe32( val );
+  for ( size_t i = 0; i < sizeof( val ); i++ ) {
+    out.push_back( be >> ( ( sizeof( val ) - i - 1 ) * 8 ) );
+  }
+  return out;
+}
+
+template<std::unsigned_integral T>
+T str_to_uint( std::string_view val )
+{
+  T out = 0;
+  for ( size_t i = 0; i < sizeof( out ); i++ ) {
+    out <<= 8;
+    out |= static_cast<T>( val[i] );
+  }
+  return be32toh( out );
+}

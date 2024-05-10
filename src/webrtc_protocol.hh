@@ -6,8 +6,7 @@
 
 
 static constexpr uint16_t SERVER_DEFAULT_PORT = 9000;
-static constexpr uint16_t CLIENT_QUACK_DEFAULT_PORT = 9001;
-static constexpr uint16_t CLIENT_PROTOCOL_DEFAULT_PORT = 9002;
+static constexpr uint16_t CLIENT_DEFAULT_PORT = 9001;
 
 // Parse an encrypted WebRTC UDP packet
 // Encrypted format: nonce (24 bytes) | ciphertext

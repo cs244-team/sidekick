@@ -46,7 +46,10 @@ private:
   std::unordered_map<uint32_t, uint32_t> opaque_ids_to_seqnos_ {};
 
   // Input buffer to read data from
-  AudioBuffer input_buffer_;
+  AudioBuffer& input_buffer_;
+
+  std::mutex buffer_mutex {};
+  std::condition_variable buffer_cv {};
 
   // How often to send a packet in milliseconds
   uint64_t send_frequency_;
@@ -67,7 +70,7 @@ public:
     : client_port_( client_port )
     , quack_port_( quack_port )
     , webrtc_server_address_( server_address )
-    , input_buffer_( std::move( buffer ) )
+    , input_buffer_( buffer )
     , send_frequency_( send_frequency )
   {
     client_socket_.bind( Address( "0.0.0.0", client_port ) );
@@ -82,11 +85,6 @@ public:
     while ( true ) {
       std::string payload;
       Address server_address = client_socket_.recvfrom( payload );
-
-      if ( server_address != webrtc_server_address_ ) {
-        // Ignore this packet as it's probably not meant for us
-        continue;
-      }
 
       // Decrypt sequence number from NACK
       std::string_view nonce = std::string_view( payload ).substr( 0, NONCE_LEN );
@@ -110,10 +108,17 @@ public:
 
     // The client sends a numbered packet containing 240 bytes of data every 20 milliseconds (TODO: where should we
     // chunk the stream into 240 byte packets?)
-    while ( !input_buffer_.is_empty() ) {
+    while ( true ) {
       std::this_thread::sleep_for( std::chrono::milliseconds( send_frequency_ ) );
 
-      std::string data = input_buffer_.pop();
+      std::string data;
+
+      {
+        std::unique_lock<std::mutex> lock(buffer_mutex);  // Assume you have a std::mutex buffer_mutex;
+        buffer_cv.wait(lock, [&]{ return !input_buffer_.is_empty(); });  // buffer_cv is std::condition_variable
+        data = input_buffer_.pop();
+      }
+
       std::string payload = webrtc_serialize( next_seqno_, data );
       std::optional<uint32_t> packet_id = get_packet_id( payload );
       if ( !packet_id.has_value() ) {
@@ -128,7 +133,7 @@ public:
       std::unique_lock lk( sent_data_rw_lock_ );
       sent_data_[next_seqno_++] = payload;
       lk.unlock();
-
+      
       client_socket_.sendto( payload, webrtc_server_address_ );
     }
   }
@@ -160,6 +165,7 @@ int main( int argc, char* argv[] )
 
   // Audio stream details (default is 10s of 240-byte audio samples sending at 50 samples/s)
   uint64_t audio_duration = 10;       // 10 seconds
+  // [GRIFFIN COMMENT: No losses occur with this]
   uint64_t audio_send_frequency = 20; // Send a sample every 20 milliseconds
   uint64_t audio_sample_size = 240;   // 240 bytes
 
@@ -175,12 +181,21 @@ int main( int argc, char* argv[] )
 
   crypto_init();
 
-  AudioBuffer buffer( ( audio_duration * 1000 ) / audio_send_frequency, audio_sample_size );
+
+  AudioBuffer buffer;
   WebRTCClient client( client_port, quack_port, Address( server_ip, server_port ), buffer, audio_send_frequency );
 
+  // To test this, drag a wav file into util and replace the lines below with that filename
+
+  // AudioBuffer::wav_to_pcm("/home/cs244/Desktop/cs244/sidekick/util/3435.wav", "/home/cs244/Desktop/cs244/sidekick/util/3435.pcm");
+  // std::string filePath = "/home/cs244/Desktop/cs244/sidekick/util/3435.pcm";
+
+
+  std::thread sampleThread([&buffer, &filePath]() { buffer.load_samples(filePath); });
   std::thread nack_thread( [&] { client.receive_nacks(); } );
   std::thread send_thread( [&] { client.send_packets(); } );
 
+  sampleThread.join();
   nack_thread.join();
   send_thread.join();
 

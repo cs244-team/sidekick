@@ -41,3 +41,4 @@
 build
 *.log
 libsodium-stable
+3435.*

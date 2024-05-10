@@ -40,3 +40,4 @@
 /.vscode
 build
 *.log
+libsodium-stable

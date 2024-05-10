@@ -38,10 +38,10 @@ private:
 
 public:
   // For latency calculations
-  std::unordered_map<uint32_t, Packet> received_packets() const { return received_packets_; }
+  std::unordered_map<uint32_t, Packet>& received_packets() { return received_packets_; }
 
   // In order to update time of last NACK upon retransmission
-  std::unordered_map<uint32_t, time_point_t> missing_seqnos() { return missing_seqnos_; }
+  std::unordered_map<uint32_t, time_point_t>& missing_seqnos() { return missing_seqnos_; }
 
   // Add data to buffer, and check if any data can be immediately played back
   void push( uint32_t seqno, std::string& data )

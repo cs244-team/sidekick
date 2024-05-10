@@ -39,4 +39,5 @@
 # Other
 /.vscode
 build
+*.log
 libsodium-stable

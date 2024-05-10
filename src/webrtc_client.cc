@@ -44,8 +44,11 @@ private:
   // Mapping between sequence numbers and encrypted packets (TODO: maybe clear these out after X seconds?)
   std::unordered_map<uint32_t, std::string> sent_data_ {};
 
+  // Mapping between opaque quack (packet) identifiers and seqnos
+  std::unordered_map<uint32_t, uint32_t> opaque_ids_to_seqnos_ {};
+
   // Input buffer to read data from
-  AudioBuffer buffer {};
+  AudioBuffer input_buffer_;
 
   // Retransmit a packet based on its sequence number
   void retransmit( uint32_t seqno )
@@ -55,8 +58,11 @@ private:
   }
 
 public:
-  WebRTCClient( uint16_t client_port, uint16_t quack_port, AudioBuffer buffer, Address server_address )
-    : client_port_( client_port ), quack_port_( quack_port ), webrtc_server_address_( server_address )
+  WebRTCClient( uint16_t client_port, uint16_t quack_port, AudioBuffer& buffer, Address server_address )
+    : client_port_( client_port )
+    , quack_port_( quack_port )
+    , webrtc_server_address_( server_address )
+    , input_buffer_( std::move( buffer ) )
   {
     client_socket_.bind( Address( "0.0.0.0", client_port ) );
     quack_socket_.bind( Address( "0.0.0.0", quack_port ) );
@@ -85,16 +91,31 @@ public:
     }
   }
 
-  void send_packet()
+  void send_packets()
   {
-    while ( !buffer.is_empty() ) {
-      std::string data = buffer.pop();
+    std::cerr << "WebRTCClient starting to send audio from port " << client_port_ << " to "
+              << webrtc_server_address_.ip() << ":" << webrtc_server_address_.port() << std::endl;
 
-      auto [nonce, ct] = encrypt( uint_to_str( next_seqno_ ) + data );
-      sent_data_[next_seqno_] = nonce + ct;
+    // The client sends a numbered packet containing 240 bytes of data every 20 milliseconds (TODO: where should we
+    // chunk the stream into 240 byte packets?)
+    while ( !input_buffer_.is_empty() ) {
+      std::this_thread::sleep_for( std::chrono::milliseconds( 20 ) ); // TODO: make this a cli argument?
 
-      client_socket_.sendto( nonce + ct, webrtc_server_address_ );
-      next_seqno_++;
+      std::string data = input_buffer_.pop();
+      std::string payload = webrtc_serialize( next_seqno_, data );
+      std::optional<uint32_t> packet_id = get_packet_id( payload );
+      if ( !packet_id.has_value() ) {
+        std::cerr << "Audio payload doesn't have enough data to obtain packet identifier" << std::endl;
+      }
+
+      // Add mapping between opaque identifer and the payload's sequence number (so that SidekickReceiver can
+      // retransmit)
+      opaque_ids_to_seqnos_[packet_id.value()] = next_seqno_;
+
+      // Keep track of this payload for future retransmission, if necessary
+      sent_data_[next_seqno_++] = payload;
+
+      client_socket_.sendto( payload, webrtc_server_address_ );
     }
   }
 };
@@ -133,7 +154,7 @@ int main( int argc, char* argv[] )
   WebRTCClient client( client_port, quack_port, buffer, Address( server_ip, server_port ) );
 
   std::thread nack_thread( [&] { client.receive_nacks(); } );
-  std::thread send_thread( [&] { client.send_packet(); } );
+  std::thread send_thread( [&] { client.send_packets(); } );
 
   nack_thread.join();
   send_thread.join();

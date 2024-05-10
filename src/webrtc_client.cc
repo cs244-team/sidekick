@@ -48,6 +48,9 @@ private:
   // Input buffer to read data from
   AudioBuffer input_buffer_;
 
+  // How often to send a packet in milliseconds
+  uint64_t send_frequency_;
+
   // Retransmit a packet based on its sequence number
   void retransmit( uint32_t seqno )
   {
@@ -56,11 +59,16 @@ private:
   }
 
 public:
-  WebRTCClient( uint16_t client_port, uint16_t quack_port, AudioBuffer& buffer, Address server_address )
+  WebRTCClient( uint16_t client_port,
+                uint16_t quack_port,
+                Address server_address,
+                AudioBuffer& buffer,
+                uint64_t send_frequency )
     : client_port_( client_port )
     , quack_port_( quack_port )
     , webrtc_server_address_( server_address )
     , input_buffer_( std::move( buffer ) )
+    , send_frequency_( send_frequency )
   {
     client_socket_.bind( Address( "0.0.0.0", client_port ) );
     quack_socket_.bind( Address( "0.0.0.0", quack_port ) );
@@ -103,7 +111,7 @@ public:
     // The client sends a numbered packet containing 240 bytes of data every 20 milliseconds (TODO: where should we
     // chunk the stream into 240 byte packets?)
     while ( !input_buffer_.is_empty() ) {
-      std::this_thread::sleep_for( std::chrono::milliseconds( 20 ) ); // TODO: make this a cli argument?
+      std::this_thread::sleep_for( std::chrono::milliseconds( send_frequency_ ) );
 
       std::string data = input_buffer_.pop();
       std::string payload = webrtc_serialize( next_seqno_, data );
@@ -150,19 +158,25 @@ int main( int argc, char* argv[] )
   // SidekickReceiver port
   uint16_t quack_port = QUACK_LISTEN_PORT;
 
+  // Audio stream details (default is 10s of 240-byte audio samples sending at 50 samples/s)
+  uint64_t audio_duration = 10;       // 10 seconds
+  uint64_t audio_send_frequency = 20; // Send a sample every 20 milliseconds
+  uint64_t audio_sample_size = 240;   // 240 bytes
+
   app.add_option( "-i,--server-ip", server_ip, "IP address of server" )->capture_default_str();
   app.add_option( "-p,--server-port", server_port, "Server port to send audio data to" )->capture_default_str();
   app.add_option( "-c,--client-port", client_port, "Port to send audio data from" )->capture_default_str();
   app.add_option( "-q,--quack-port", quack_port, "Port to listen for quacks on" )->capture_default_str();
+  app.add_option( "-d, --duration", audio_duration, "The length in seconds of the audio stream in seconds" )->capture_default_str();
+  app.add_option( "-f, --frequency", audio_send_frequency, "How often to send a packet in milliseconds" )->capture_default_str();
+  app.add_option( "-s, --sample-size", audio_sample_size, "The size of each audio sample in bytes" )->capture_default_str();
 
   CLI11_PARSE( app, argc, argv );
 
   crypto_init();
 
-  // For now, just use 200 24-byte random samples
-  AudioBuffer buffer( 200, 240 );
-
-  WebRTCClient client( client_port, quack_port, buffer, Address( server_ip, server_port ) );
+  AudioBuffer buffer( ( audio_duration * 1000 ) / audio_send_frequency, audio_sample_size );
+  WebRTCClient client( client_port, quack_port, Address( server_ip, server_port ), buffer, audio_send_frequency );
 
   std::thread nack_thread( [&] { client.receive_nacks(); } );
   std::thread send_thread( [&] { client.send_packets(); } );

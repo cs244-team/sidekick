@@ -89,8 +89,9 @@ public:
         std::cerr << "Unable to decrypt NACK" << std::endl;
       }
 
-      std::cerr << "Retransmitting packet for seqno based on NACK: " << seqno.value() << std::endl;
-      retransmit( str_to_uint<uint32_t>( seqno.value() ) );
+      uint32_t seqno_val = str_to_uint<uint32_t>( seqno.value() );
+      std::cerr << "Retransmitting packet for seqno based on NACK: " << seqno_val << std::endl;
+      retransmit( seqno_val );
     }
   }
 

@@ -77,6 +77,11 @@ public:
       std::string payload;
       Address server_address = client_socket_.recvfrom( payload );
 
+      if ( server_address != webrtc_server_address_ ) {
+        // Ignore this packet as it's probably not meant for us
+        continue;
+      }
+
       // Decrypt sequence number from NACK
       std::string_view nonce = std::string_view( payload ).substr( 0, NONCE_LEN );
       std::string_view ciphertext = std::string_view( payload ).substr( NONCE_LEN );

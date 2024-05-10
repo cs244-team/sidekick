@@ -22,19 +22,16 @@
 #include <unistd.h>
 #include <vector>
 
-// using namespace std;
-
 using namespace std::chrono;
 
 class WebRTCClient
 {
-
 private:
   // Send outgoing audio stream
   UDPSocket client_socket_ {};
   uint16_t client_port_ {};
 
-  // Sidekick receiver (TODO (Hari): this should not be here, extract to SidekickReceiver)
+  // Sidekick receiver (TODO(Hari): might be best to put this in SidekickReceiver)
   UDPSocket quack_socket_ {};
   uint16_t quack_port_ {};
 
@@ -44,14 +41,17 @@ private:
   // Next sequence number to dish out
   uint32_t next_seqno_ {};
 
-  unordered_map<uint32_t, std::string> outstanding_dgrams {};
+  // Mapping between sequence numbers and encrypted packets (TODO: maybe clear these out after X seconds?)
+  std::unordered_map<uint32_t, std::string> sent_data_ {};
 
+  // Input buffer to read data from
   AudioBuffer buffer {};
 
-  void retransmit( string payload, uint32_t seqno )
+  // Retransmit a packet based on its sequence number
+  void retransmit( uint32_t seqno )
   {
     std::cerr << "Retransmitting packet for seqno: " << seqno << std::endl;
-    client_socket_.sendto( payload, webrtc_server_address_ );
+    client_socket_.sendto( sent_data_[seqno], webrtc_server_address_ );
   }
 
 public:
@@ -63,22 +63,25 @@ public:
   }
 
   // Listening thread
-  void receive_NACK()
+  void receive_nacks()
   {
+    std::cerr << "WebRTCClient listening for NACKs on port " << client_port_ << std::endl;
+
     while ( true ) {
       std::string payload;
-      webrtc_server_address_ = client_socket_.recvfrom( payload );
+      Address server_address = client_socket_.recvfrom( payload );
 
-      // Try to parse encrypted WebRTC data
-      auto parse_result = webrtc_parse( payload );
-      if ( !parse_result.has_value() ) {
-        continue;
+      // Decrypt sequence number from NACK
+      std::string_view nonce = std::string_view( payload ).substr( 0, NONCE_LEN );
+      std::string_view ciphertext = std::string_view( payload ).substr( NONCE_LEN );
+      std::optional<std::string> seqno = decrypt( nonce, ciphertext );
+
+      if ( !seqno.has_value() ) {
+        std::cerr << "Unable to decrypt NACK" << std::endl;
       }
 
-      auto [seqno, data] = parse_result.value();
-
-      auto packet = outstanding_dgrams[seqno];
-      retransmit( packet, seqno );
+      std::cerr << "Retransmitting packet for seqno based on NACK: " << seqno.value() << std::endl;
+      retransmit( str_to_uint<uint32_t>( seqno.value() ) );
     }
   }
 
@@ -88,7 +91,7 @@ public:
       std::string data = buffer.pop();
 
       auto [nonce, ct] = encrypt( uint_to_str( next_seqno_ ) + data );
-      outstanding_dgrams[next_seqno_] = nonce + ct;
+      sent_data_[next_seqno_] = nonce + ct;
 
       client_socket_.sendto( nonce + ct, webrtc_server_address_ );
       next_seqno_++;
@@ -129,7 +132,7 @@ int main( int argc, char* argv[] )
 
   WebRTCClient client( client_port, quack_port, buffer, Address( server_ip, server_port ) );
 
-  std::thread nack_thread( [&] { client.receive_NACK(); } );
+  std::thread nack_thread( [&] { client.receive_nacks(); } );
   std::thread send_thread( [&] { client.send_packet(); } );
 
   nack_thread.join();

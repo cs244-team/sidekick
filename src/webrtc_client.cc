@@ -154,17 +154,12 @@ int main( int argc, char* argv[] )
   app.add_option( "-c,--client-port", client_port, "Port to send audio data from" )->capture_default_str();
   app.add_option( "-q,--quack-port", quack_port, "Port to listen for quacks on" )->capture_default_str();
 
-  AudioBuffer buffer = {}; // FILL IN AUDIO BUFFER
-
-  // Test buffer
-  string test = "abcdefghijklm";
-  for ( int i = 0; i < 10; i++ ) {
-    buffer.add_sample( std::to_string( i ) );
-  }
-
   CLI11_PARSE( app, argc, argv );
 
   crypto_init();
+
+  // For now, just use 200 24-byte random samples
+  AudioBuffer buffer( 200, 240 );
 
   WebRTCClient client( client_port, quack_port, buffer, Address( server_ip, server_port ) );
 

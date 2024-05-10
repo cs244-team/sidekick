@@ -67,7 +67,7 @@ public:
     }
   }
 
-  // Play back data in-order (just print for now)
+  // Play back data in-order (just empties the previously played data)
   void play()
   {
     std::cerr << "WebRTCServer playback thread started" << std::endl;

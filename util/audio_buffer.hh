@@ -1,27 +1,38 @@
-#include <string>
+#include <fstream>
 #include <queue>
+#include <string>
 
 using namespace std;
 
-
-class AudioBuffer{
+class AudioBuffer
+{
 
 private:
-
-    queue<string> buffer {};
-
+  queue<string> buffer {};
 
 public:
-    AudioBuffer() {}
+  AudioBuffer() {};
 
-    string pop(){ 
-        string sample = buffer.front();
-        buffer.pop(); 
-        return sample;
+  // From random source
+  AudioBuffer( size_t num_samples, size_t sample_size )
+  {
+    string t;
+    t.resize( sample_size );
+    ifstream urandom( "/dev/urandom", ios::in | ios::binary );
+    for ( size_t i = 0; i < num_samples; i++ ) {
+      urandom.read( reinterpret_cast<char*>( t.data() ), sample_size ); // Read from urandom
+      buffer.push( t );
     }
+  }
 
-    void add_sample(string data){ buffer.push(data); }
+  string pop()
+  {
+    string sample = buffer.front();
+    buffer.pop();
+    return sample;
+  }
 
-    bool is_empty(){ return buffer.empty(); }
+  void add_sample( string data ) { buffer.push( data ); }
 
+  bool is_empty() { return buffer.empty(); }
 };

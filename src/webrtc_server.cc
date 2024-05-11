@@ -68,9 +68,8 @@ public:
   }
 
   // Play back data in-order (just empties the previously played data)
-  void play()
+  void drain()
   {
-    std::cerr << "WebRTCServer playback thread started" << std::endl;
     while ( 1 ) {
       buffer_.pop();
     }
@@ -95,7 +94,7 @@ int main( int argc, char* argv[] )
   WebRTCServer server( port, rtt );
 
   std::thread listen_thread( [&] { server.listen(); } );
-  std::thread play_thread( [&] { server.play(); } );
+  std::thread play_thread( [&] { server.drain(); } );
 
   listen_thread.join();
   play_thread.join();

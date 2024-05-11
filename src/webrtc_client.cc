@@ -112,10 +112,9 @@ public:
       std::this_thread::sleep_for( std::chrono::milliseconds( send_frequency_ ) );
 
       std::string data;
-
       {
-        std::unique_lock<std::mutex> lock(buffer_mutex);  // Assume you have a std::mutex buffer_mutex;
-        buffer_cv.wait(lock, [&]{ return !input_buffer_.is_empty(); });  // buffer_cv is std::condition_variable
+        std::unique_lock<std::mutex> lock( buffer_mutex ); // Assume you have a std::mutex buffer_mutex;
+        buffer_cv.wait( lock, [&] { return !input_buffer_.is_empty(); } ); // buffer_cv is std::condition_variable
         data = input_buffer_.pop();
       }
 
@@ -130,10 +129,11 @@ public:
       opaque_ids_to_seqnos_[packet_id.value()] = next_seqno_;
 
       // Keep track of this payload for future retransmission, if necessary
-      std::unique_lock lk( sent_data_rw_lock_ );
-      sent_data_[next_seqno_++] = payload;
-      lk.unlock();
-      
+      {
+        std::unique_lock lk( sent_data_rw_lock_ );
+        sent_data_[next_seqno_++] = payload;
+      }
+
       client_socket_.sendto( payload, webrtc_server_address_ );
     }
   }
@@ -163,39 +163,43 @@ int main( int argc, char* argv[] )
   // SidekickReceiver port
   uint16_t quack_port = QUACK_LISTEN_PORT;
 
-  // Audio stream details (default is 10s of 240-byte audio samples sending at 50 samples/s)
-  uint64_t audio_duration = 10;       // 10 seconds
-  // [GRIFFIN COMMENT: No losses occur with this]
+  // Audio stream details (default is 10s of 240-byte random audio samples sending at 50 samples/s)
+  std::string audio_file_path = "";
   uint64_t audio_send_frequency = 20; // Send a sample every 20 milliseconds
+  uint64_t audio_duration = 20;       // 20 seconds
   uint64_t audio_sample_size = 240;   // 240 bytes
 
   app.add_option( "-i,--server-ip", server_ip, "IP address of server" )->capture_default_str();
   app.add_option( "-p,--server-port", server_port, "Server port to send audio data to" )->capture_default_str();
   app.add_option( "-c,--client-port", client_port, "Port to send audio data from" )->capture_default_str();
   app.add_option( "-q,--quack-port", quack_port, "Port to listen for quacks on" )->capture_default_str();
-  app.add_option( "-d, --duration", audio_duration, "The length in seconds of the audio stream in seconds" )->capture_default_str();
-  app.add_option( "-f, --frequency", audio_send_frequency, "How often to send a packet in milliseconds" )->capture_default_str();
-  app.add_option( "-s, --sample-size", audio_sample_size, "The size of each audio sample in bytes" )->capture_default_str();
+  app.add_option( "-a,--audio-file", audio_file_path, "WAV file to stream, otherwise random data will be used" );
+  app.add_option( "-f,--frequency", audio_send_frequency, "How often to send a packet in milliseconds" )->capture_default_str();
+  app.add_option( "-d,--duration", audio_duration, "The length of the audio stream in seconds, if no audio file specified")->capture_default_str();
+  app.add_option( "-s,--sample-size", audio_sample_size, "The size of each audio sample in bytes, if no audio file specified" )->capture_default_str();
 
   CLI11_PARSE( app, argc, argv );
 
   crypto_init();
 
-
   AudioBuffer buffer;
   WebRTCClient client( client_port, quack_port, Address( server_ip, server_port ), buffer, audio_send_frequency );
 
-  // To test this, drag a wav file into util and replace the lines below with that filename
+  std::thread audio_thread( [&]() {
+    // Load an audio file or read from /dev/urandom
+    if ( !audio_file_path.empty() ) {
+      std::string pcm_file_path = audio_file_path + ".pcm";
+      AudioBuffer::wav_to_pcm( audio_file_path, pcm_file_path );
+      buffer.load_samples( pcm_file_path );
+    } else {
+      buffer.load_random_samples( ( audio_duration * 1000 ) / audio_send_frequency, audio_sample_size );
+    }
+  } );
 
-  // AudioBuffer::wav_to_pcm("/home/cs244/Desktop/cs244/sidekick/util/3435.wav", "/home/cs244/Desktop/cs244/sidekick/util/3435.pcm");
-  // std::string filePath = "/home/cs244/Desktop/cs244/sidekick/util/3435.pcm";
-
-
-  std::thread sampleThread([&buffer, &filePath]() { buffer.load_samples(filePath); });
   std::thread nack_thread( [&] { client.receive_nacks(); } );
   std::thread send_thread( [&] { client.send_packets(); } );
 
-  sampleThread.join();
+  audio_thread.join();
   nack_thread.join();
   send_thread.join();
 

@@ -5,6 +5,9 @@
 #include <random>
 #include <shared_mutex>
 #include <thread>
+#include <string>
+#include <queue>
+#include <unordered_map>
 
 #include "address.hh"
 #include "audio_buffer.hh"
@@ -15,6 +18,8 @@
 #include "sidekick_protocol.hh"
 #include "socket.hh"
 #include "webrtc_protocol.hh"
+#include "ipv4_datagram.hh"
+#include "quack.hh"
 
 class WebRTCClient
 {
@@ -23,9 +28,11 @@ private:
   UDPSocket client_socket_ {};
   uint16_t client_port_ {};
 
-  // Sidekick receiver (TODO(Hari): might be best to put this in SidekickReceiver)
+  // Sidekick receiver components
+  // TODO: consider moving into separate SidekickReceiver
   UDPSocket quack_socket_ {};
   uint16_t quack_port_ {};
+  size_t missing_packet_threshold_;
 
   // The "peer" we are sending data to
   Address webrtc_server_address_;
@@ -36,18 +43,17 @@ private:
   // Mapping between sequence numbers and encrypted packets (TODO: maybe clear these out after X seconds?)
   std::unordered_map<uint32_t, std::string> sent_data_ {};
 
-  // retransmit() is called by nack_thread which reads from `sent_data_` and send_packets() writes to `sent_data_`
-  // from the sender thread
-  //
-  // TODO: once we figure out how SidekickReceiver interacts with this client, we may need to guard that access too
+  // Protects sent_data_ from concurrent accesses in retransmit(), send_packets(), and receive_quacks()
   std::shared_mutex sent_data_rw_lock_ {};
 
   // Mapping between opaque quack (packet) identifiers and seqnos
   std::unordered_map<uint32_t, uint32_t> opaque_ids_to_seqnos_ {};
 
+  // Protect quack identifiers <-> seqno map, since we have shared access by sidekick receiver
+  std::shared_mutex id_mapping_lock_ {};
+
   // Input buffer to read data from
   AudioBuffer& input_buffer_;
-
   std::mutex buffer_mutex {};
   std::condition_variable buffer_cv {};
 
@@ -66,12 +72,14 @@ public:
                 uint16_t quack_port,
                 Address server_address,
                 AudioBuffer& buffer,
-                uint64_t send_frequency )
+                uint64_t send_frequency,
+                size_t missing_packet_threshold = 8 )
     : client_port_( client_port )
     , quack_port_( quack_port )
     , webrtc_server_address_( server_address )
     , input_buffer_( buffer )
     , send_frequency_( send_frequency )
+    , missing_packet_threshold_ (missing_packet_threshold)
   {
     client_socket_.bind( Address( "0.0.0.0", client_port ) );
     quack_socket_.bind( Address( "0.0.0.0", quack_port ) );
@@ -123,29 +131,91 @@ public:
       if ( !packet_id.has_value() ) {
         std::cerr << "Audio payload doesn't have enough data to obtain packet identifier" << std::endl;
       }
+      else {
+        // Add mapping between opaque identifer and the payload's sequence number (so that SidekickReceiver can
+        // retransmit)
+        {
+          std::unique_lock lk( id_mapping_lock_ );
+          opaque_ids_to_seqnos_[packet_id.value()] = next_seqno_;
+        }
+        // Keep track of this payload for future retransmission, if necessary
+        {
+          std::unique_lock lk( sent_data_rw_lock_ );
+          sent_data_[next_seqno_++] = payload;
+        }
 
-      // Add mapping between opaque identifer and the payload's sequence number (so that SidekickReceiver can
-      // retransmit)
-      opaque_ids_to_seqnos_[packet_id.value()] = next_seqno_;
-
-      // Keep track of this payload for future retransmission, if necessary
-      {
-        std::unique_lock lk( sent_data_rw_lock_ );
-        sent_data_[next_seqno_++] = payload;
+        client_socket_.sendto( payload, webrtc_server_address_ );
       }
-
-      client_socket_.sendto( payload, webrtc_server_address_ );
     }
   }
 
-  // TODO(Hari): this is the simplest interface I could think of for the SidekickReceiver to tell this client to
-  // retransmit a packet
+  void receive_quacks()
+  {
+    std::cerr << "SidekickReceiver started" << std::endl;
+    while (true) {
+      std::string payload;
+      Address proxy_address = quack_socket_.recvfrom( payload );
+
+      Quack recvd_quack;
+      if ( !parse( recvd_quack, { payload } ) ) {
+        std::cerr << "Unable to parse quack" << std::endl;
+      }
+      else {
+        uint32_t last_recd_seqno;
+        {
+          std::unique_lock lk( id_mapping_lock_ );
+          // TODO: remove next 5 lines (DEBUG)
+          std::cerr << "sent opaque ids: ";
+          for (auto&it : opaque_ids_to_seqnos_) {
+            std::cerr << it.first << " ";
+          }
+          std::cerr << std::endl;
+          last_recd_seqno = opaque_ids_to_seqnos_[recvd_quack.last_received_id];
+        }
+        std::cerr << "last received seqno: " << last_recd_seqno << "\n";
+        uint32_t num_missing = (last_recd_seqno + 1) - recvd_quack.num_received;
+        // TODO: error if num missing > max threshold?
+        PowerSums& recvd_power_sums = recvd_quack.power_sums;
+        std::cerr << "Received quack from: " << proxy_address.ip() << ":" << proxy_address.port() << "\n"
+                  << "num_received: " << recvd_quack.num_received << "\n"
+                  << "last_received_id: " << recvd_quack.last_received_id << "\n"
+                  << "power_sums: " << recvd_quack.power_sums << "\n"
+                  << "packets missing: " << num_missing << "\n";
+
+        // Calculate power sums from sender's side (set of all sent packets)
+        PowerSums sent_power_sums = PowerSums(missing_packet_threshold_);
+        {
+          std::unique_lock lk (sent_data_rw_lock_);
+          for (int i = 0; i <= last_recd_seqno; i++) {
+            sent_power_sums.add(get_packet_id(sent_data_[i]).value());
+          }
+        }
+        std::cerr << "Local power sums: " << sent_power_sums << "\n";
+
+        // Derive polynomial with coefficients from difference of power sums, and find roots (missing packets)
+        Polynomial diff_poly = Polynomial(sent_power_sums.difference(recvd_power_sums));
+        {
+          std::unique_lock lk (sent_data_rw_lock_);
+          for (int i = 0; i <= last_recd_seqno; i++) {
+            uint32_t pkt_id = get_packet_id(sent_data_[i]).value();
+            if (diff_poly.eval(pkt_id) == 0) {
+              std::cerr << "Missing packet id: " << pkt_id << "\n";
+              retransmit_opaque_id(pkt_id);
+            }
+          }
+        }
+
+        std::cerr << std::endl;
+      }
+    }
+  }
+
+  // TODO: just fold into receive_quacks?
   void retransmit_opaque_id( uint32_t id )
   {
-    // TODO: lookup corresponding seqno in opaque_ids_to_seqnos_ (also may need to protect this if SidekickReceiver
-    // is calling this method), against send_packets()'s write
-    // TODO: call retransmit( seqno )
-    return;
+    // lookup corresponding seqno in opaque_ids_to_seqnos_, call retransmit( seqno )
+    std::unique_lock lk( id_mapping_lock_ );
+    retransmit(opaque_ids_to_seqnos_[id]);
   }
 };
 
@@ -198,10 +268,12 @@ int main( int argc, char* argv[] )
 
   std::thread nack_thread( [&] { client.receive_nacks(); } );
   std::thread send_thread( [&] { client.send_packets(); } );
+  std::thread quack_thread ([&] { client.receive_quacks(); });
 
   audio_thread.join();
   nack_thread.join();
   send_thread.join();
+  quack_thread.join();
 
   return EXIT_SUCCESS;
 }

@@ -2,24 +2,25 @@
 #include <iostream>
 #include <mutex>
 #include <optional>
+#include <queue>
 #include <random>
 #include <shared_mutex>
-#include <thread>
 #include <string>
-#include <queue>
+#include <thread>
 #include <unordered_map>
+#include <vector>
 
 #include "address.hh"
 #include "audio_buffer.hh"
 #include "cli11.hh"
 #include "conqueue.hh"
 #include "crypto.hh"
+#include "ipv4_datagram.hh"
 #include "parser.hh"
+#include "quack.hh"
 #include "sidekick_protocol.hh"
 #include "socket.hh"
 #include "webrtc_protocol.hh"
-#include "ipv4_datagram.hh"
-#include "quack.hh"
 
 class WebRTCClient
 {
@@ -32,7 +33,13 @@ private:
   // TODO: consider moving into separate SidekickReceiver
   UDPSocket quack_socket_ {};
   uint16_t quack_port_ {};
-  size_t missing_packet_threshold_;
+  size_t missing_packet_threshold_ {};
+
+  // In-order packet ids that have been (re-)transmitted
+  std::vector<uint32_t> sent_pkt_ids_ {};
+
+  // Protects sent_pkt_ids_ from concurrent accesses in retransmit(), send_packets(), and receive_quacks()
+  std::shared_mutex sent_ids_lock_ {};
 
   // The "peer" we are sending data to
   Address webrtc_server_address_;
@@ -43,7 +50,7 @@ private:
   // Mapping between sequence numbers and encrypted packets (TODO: maybe clear these out after X seconds?)
   std::unordered_map<uint32_t, std::string> sent_data_ {};
 
-  // Protects sent_data_ from concurrent accesses in retransmit(), send_packets(), and receive_quacks()
+  // Protects sent_data_ from concurrent accesses in retransmit(), send_packets()
   std::shared_mutex sent_data_rw_lock_ {};
 
   // Mapping between opaque quack (packet) identifiers and seqnos
@@ -64,6 +71,13 @@ private:
   void retransmit( uint32_t seqno )
   {
     std::shared_lock lk( sent_data_rw_lock_ );
+    std::optional<uint32_t> packet_id = get_packet_id( sent_data_[seqno] );
+
+    {
+      std::unique_lock lk( sent_ids_lock_ );
+      sent_pkt_ids_.push_back( packet_id.value() );
+    }
+
     client_socket_.sendto( sent_data_[seqno], webrtc_server_address_ );
   }
 
@@ -79,7 +93,7 @@ public:
     , webrtc_server_address_( server_address )
     , input_buffer_( buffer )
     , send_frequency_( send_frequency )
-    , missing_packet_threshold_ (missing_packet_threshold)
+    , missing_packet_threshold_( missing_packet_threshold )
   {
     client_socket_.bind( Address( "0.0.0.0", client_port ) );
     quack_socket_.bind( Address( "0.0.0.0", quack_port ) );
@@ -130,83 +144,93 @@ public:
       std::optional<uint32_t> packet_id = get_packet_id( payload );
       if ( !packet_id.has_value() ) {
         std::cerr << "Audio payload doesn't have enough data to obtain packet identifier" << std::endl;
+        continue;
       }
-      else {
-        // Add mapping between opaque identifer and the payload's sequence number (so that SidekickReceiver can
-        // retransmit)
-        {
-          std::unique_lock lk( id_mapping_lock_ );
-          opaque_ids_to_seqnos_[packet_id.value()] = next_seqno_;
-        }
-        // Keep track of this payload for future retransmission, if necessary
-        {
-          std::unique_lock lk( sent_data_rw_lock_ );
-          sent_data_[next_seqno_++] = payload;
-        }
 
-        client_socket_.sendto( payload, webrtc_server_address_ );
+      // Add mapping between opaque identifer and the payload's sequence number (so that SidekickReceiver can
+      // retransmit)
+      {
+        std::unique_lock lk( id_mapping_lock_ );
+        opaque_ids_to_seqnos_[packet_id.value()] = next_seqno_;
       }
+
+      // Keep track of this payload for future retransmission, if necessary
+      {
+        std::unique_lock lk( sent_data_rw_lock_ );
+        sent_data_[next_seqno_++] = payload;
+      }
+
+      // Add this packet id to the in-order ids sent
+      {
+        std::unique_lock lk( sent_ids_lock_ );
+        sent_pkt_ids_.push_back( packet_id.value() );
+      }
+
+      client_socket_.sendto( payload, webrtc_server_address_ );
     }
   }
 
   void receive_quacks()
   {
     std::cerr << "SidekickReceiver started" << std::endl;
-    while (true) {
+
+    PowerSums running_sums( missing_packet_threshold_ );
+    size_t next_unquacked_idx = 0;
+    // uint32_t num_missing = 0;
+
+    while ( true ) {
       std::string payload;
       Address proxy_address = quack_socket_.recvfrom( payload );
 
       Quack recvd_quack;
       if ( !parse( recvd_quack, { payload } ) ) {
         std::cerr << "Unable to parse quack" << std::endl;
+        continue;
       }
-      else {
-        uint32_t last_recd_seqno;
-        {
-          std::unique_lock lk( id_mapping_lock_ );
-          // TODO: remove next 5 lines (DEBUG)
-          std::cerr << "sent opaque ids: ";
-          for (auto&it : opaque_ids_to_seqnos_) {
-            std::cerr << it.first << " ";
-          }
-          std::cerr << std::endl;
-          last_recd_seqno = opaque_ids_to_seqnos_[recvd_quack.last_received_id];
-        }
-        std::cerr << "last received seqno: " << last_recd_seqno << "\n";
-        uint32_t num_missing = (last_recd_seqno + 1) - recvd_quack.num_received;
-        // TODO: error if num missing > max threshold?
-        PowerSums& recvd_power_sums = recvd_quack.power_sums;
-        std::cerr << "Received quack from: " << proxy_address.ip() << ":" << proxy_address.port() << "\n"
-                  << "num_received: " << recvd_quack.num_received << "\n"
-                  << "last_received_id: " << recvd_quack.last_received_id << "\n"
-                  << "power_sums: " << recvd_quack.power_sums << "\n"
-                  << "packets missing: " << num_missing << "\n";
 
-        // Calculate power sums from sender's side (set of all sent packets)
-        PowerSums sent_power_sums = PowerSums(missing_packet_threshold_);
-        {
-          std::unique_lock lk (sent_data_rw_lock_);
-          for (int i = 0; i <= last_recd_seqno; i++) {
-            sent_power_sums.add(get_packet_id(sent_data_[i]).value());
+      std::cerr << "Received quack from: " << proxy_address.ip() << ":" << proxy_address.port() << "\n"
+                << "num_received: " << recvd_quack.num_received << "\n"
+                << "last_received_id: " << recvd_quack.last_received_id << "\n"
+                << "power_sums: " << recvd_quack.power_sums << "\n";
+      // << "packets missing: " << num_missing << "\n";
+
+      // Calculate power sums from sender's side (set of all sent packets)
+      size_t first_quacked_idx = next_unquacked_idx;
+      {
+        std::unique_lock lk( sent_ids_lock_ );
+        for ( size_t i = next_unquacked_idx; i < sent_pkt_ids_.size(); i++ ) {
+          running_sums.add( sent_pkt_ids_[i] );
+          if ( sent_pkt_ids_[i] == recvd_quack.last_received_id ) {
+            next_unquacked_idx = i + 1;
+            break;
           }
         }
-        std::cerr << "Local power sums: " << sent_power_sums << "\n";
-
-        // Derive polynomial with coefficients from difference of power sums, and find roots (missing packets)
-        Polynomial diff_poly = Polynomial(sent_power_sums.difference(recvd_power_sums));
-        {
-          std::unique_lock lk (sent_data_rw_lock_);
-          for (int i = 0; i <= last_recd_seqno; i++) {
-            uint32_t pkt_id = get_packet_id(sent_data_[i]).value();
-            if (diff_poly.eval(pkt_id) == 0) {
-              std::cerr << "Missing packet id: " << pkt_id << "\n";
-              retransmit_opaque_id(pkt_id);
-            }
-          }
-        }
-
-        std::cerr << std::endl;
       }
+
+      // TODO: verify num_missing <= missing_packet_threshold
+
+      std::cerr << "Local power sums: " << running_sums << "\n";
+
+      // Derive polynomial with coefficients from difference of power sums, and find roots (missing packets)
+      Polynomial diff_poly = Polynomial( running_sums.difference( recvd_quack.power_sums ) );
+      std::vector<uint32_t> missing_packet_ids {};
+      {
+        std::unique_lock lk( sent_ids_lock_ );
+        for ( size_t i = first_quacked_idx; i < next_unquacked_idx; i++ ) {
+          uint32_t pkt_id = sent_pkt_ids_[i];
+          if ( diff_poly.eval( pkt_id ) == 0 ) {
+            std::cerr << "Missing packet id: " << pkt_id << "\n";
+            running_sums.remove( pkt_id );
+            missing_packet_ids.push_back( pkt_id );
+          }
+        }
+      }
+
+      for ( auto pkt_id : missing_packet_ids ) {
+        retransmit_opaque_id( pkt_id );
+      }
+
+      std::cerr << std::endl;
     }
   }
 
@@ -215,7 +239,7 @@ public:
   {
     // lookup corresponding seqno in opaque_ids_to_seqnos_, call retransmit( seqno )
     std::unique_lock lk( id_mapping_lock_ );
-    retransmit(opaque_ids_to_seqnos_[id]);
+    retransmit( opaque_ids_to_seqnos_[id] );
   }
 };
 
@@ -244,9 +268,16 @@ int main( int argc, char* argv[] )
   app.add_option( "-c,--client-port", client_port, "Port to send audio data from" )->capture_default_str();
   app.add_option( "-q,--quack-port", quack_port, "Port to listen for quacks on" )->capture_default_str();
   app.add_option( "-a,--audio-file", audio_file_path, "WAV file to stream, otherwise random data will be used" );
-  app.add_option( "-f,--frequency", audio_send_frequency, "How often to send a packet in milliseconds" )->capture_default_str();
-  app.add_option( "-d,--duration", audio_duration, "The length of the audio stream in seconds, if no audio file specified")->capture_default_str();
-  app.add_option( "-s,--sample-size", audio_sample_size, "The size of each audio sample in bytes, if no audio file specified" )->capture_default_str();
+  app.add_option( "-f,--frequency", audio_send_frequency, "How often to send a packet in milliseconds" )
+    ->capture_default_str();
+  app
+    .add_option(
+      "-d,--duration", audio_duration, "The length of the audio stream in seconds, if no audio file specified" )
+    ->capture_default_str();
+  app
+    .add_option(
+      "-s,--sample-size", audio_sample_size, "The size of each audio sample in bytes, if no audio file specified" )
+    ->capture_default_str();
 
   CLI11_PARSE( app, argc, argv );
 
@@ -268,7 +299,7 @@ int main( int argc, char* argv[] )
 
   std::thread nack_thread( [&] { client.receive_nacks(); } );
   std::thread send_thread( [&] { client.send_packets(); } );
-  std::thread quack_thread ([&] { client.receive_quacks(); });
+  std::thread quack_thread( [&] { client.receive_quacks(); } );
 
   audio_thread.join();
   nack_thread.join();

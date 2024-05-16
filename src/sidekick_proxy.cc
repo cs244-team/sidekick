@@ -89,15 +89,24 @@ void SidekickSender::update_quack( IPv4Address src_address, uint32_t packet_id )
   if ( quacks_.find( src_address ) == quacks_.end() ) {
     quacks_.insert( { src_address, { 0, 0, missing_packet_threshold_ } } );
   }
-
+  // TODO: REMOVE (DEBUG)
+  static uint32_t pktids[400];
   // Update quacking state for this sender
   auto& quack = quacks_[src_address];
-  quack.num_received++;
+  //quack.num_received++;
+  // TODO: REMOVE (DEBUG) + UNCOMMENT PREV LINE
+  pktids[quack.num_received++] = packet_id;
   quack.last_received_id = packet_id;
   quack.power_sums.add( packet_id );
 
   // Send quack to sidekick receiver with the current state
   if ( quack.num_received % quacking_packet_interval_ == 0 ) {
+    // TODO: REMOVE NEXT 5 LINES (DEBUG)
+    std::cerr << "packets received: ";
+    for (int i = 0; i < quack.num_received; i++) {
+      std::cerr << pktids[i] << " ";
+    }
+    std::cerr << std::endl;
     Address dest( inet_ntoa( { htobe32( src_address ) } ), QUACK_LISTEN_PORT );
 
     std::cerr << "Sending quack to: " << dest.ip() << ":" << dest.port() << "\n"

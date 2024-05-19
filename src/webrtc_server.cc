@@ -28,7 +28,7 @@ public:
     socket_.bind( Address( "0.0.0.0", port ) );
   }
 
-  void listen()
+  void listen( uint64_t num_expected_seqnos )
   {
     std::cerr << "WebRTCServer started, listening on port " << port_ << std::endl;
 
@@ -64,6 +64,12 @@ public:
           missing_seqno.second = now;
         }
       }
+
+      if ( buffer_.received_packets().size() == num_expected_seqnos ) {
+        std::cerr << "WebRTCServer received every sequence number, listener is exiting..." << std::endl;
+        dump_buffer_statistics();
+        break;
+      }
     }
   }
 
@@ -74,6 +80,17 @@ public:
       buffer_.pop();
     }
   }
+
+  void dump_buffer_statistics()
+  {
+    std::ofstream f;
+    f.open( "jitter_buffer_stats.csv" );
+    f << "seqno,latency_ms\n";
+    for ( auto& [seqno, packet] : buffer_.received_packets() ) {
+      f << seqno << "," << duration_cast<milliseconds>( packet.playable_at.value() - packet.received_at ).count() << "\n";
+    }
+    f.close();
+  }
 };
 
 int main( int argc, char* argv[] )
@@ -83,8 +100,13 @@ int main( int argc, char* argv[] )
   uint64_t rtt = 150;
   uint16_t port = SERVER_DEFAULT_PORT;
 
+  uint64_t audio_send_frequency = 20; // Send a sample every 20 milliseconds
+  uint64_t audio_duration = 20;      // 20 seconds
+
   app.add_option( "-r,--rtt", rtt, "Estimated RTT between client and server (ms)" )->capture_default_str();
   app.add_option( "-p,--port", port, "Port to listen on" )->capture_default_str();
+  app.add_option( "-f,--frequency", audio_send_frequency, "How often a packet the client sends server a packet in milliseconds" )->capture_default_str();
+  app.add_option( "-d,--duration", audio_duration, "The length of the audio stream in seconds" )->capture_default_str();
 
   CLI11_PARSE( app, argc, argv );
 
@@ -93,7 +115,8 @@ int main( int argc, char* argv[] )
 
   WebRTCServer server( port, rtt );
 
-  std::thread listen_thread( [&] { server.listen(); } );
+  uint64_t num_seqnos = ( 1000 / audio_send_frequency ) * audio_duration;
+  std::thread listen_thread( [&] { server.listen( num_seqnos ); } );
   std::thread play_thread( [&] { server.drain(); } );
 
   listen_thread.join();

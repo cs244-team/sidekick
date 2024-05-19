@@ -9,6 +9,8 @@ Link properties:
     - l2:  low loss (  0%),  low bandwidth ( 10 Mbit/s), high delay (25 ms)
 """
 
+import time
+
 from mininet.cli import CLI
 from mininet.link import TCIntf
 from mininet.log import setLogLevel
@@ -22,6 +24,12 @@ L1_BANDWIDTH = 100  # Mbit/s
 L2_DELAY = 25
 L2_LOSS = 0
 L2_BANDWIDTH = 10
+
+# Application parameters
+AUDIO_SEND_RATE = 20  # packet every 20 milliseconds
+AUDIO_DURATION = 300  # total stream length in seconds
+QUACKING_INTERVAL = 2  # proxy sends a quack every 2 packets
+MISSING_PACKET_THRESHOLD = 8
 
 EXEC_DIR = "../build/src/"
 
@@ -69,31 +77,48 @@ def configure_network(network: Mininet):
 
 def run_commands(network: Mininet):
     client, router, server = network["client"], network["router"], network["server"]
-    run_webrtc_client(node=client, server_ip=server.IP())
     run_sidekick_proxy(node=router, interface="router-eth0")
+
+    # Wait for proxy startup
+    time.sleep(1)
+
+    run_webrtc_client(node=client, server_ip=server.IP())
     run_webrtc_server(node=server, rtt=2 * (L1_DELAY + L2_DELAY))
 
     CLI(network)
 
 
 def run_webrtc_client(node, server_ip):
-    cmd = f"{EXEC_DIR}/webrtc_client --server-ip {server_ip} > ./logs/webrtc_client.log 2>&1 &"
-    return node.cmd(cmd)
-
-
-def run_sidekick_proxy(node, interface, quacking_interval=2, threshold=8):
     cmd = (
-        f"{EXEC_DIR}/sidekick_proxy --interface {interface} "
-        f"--filter 'ip and udp and not dst net 192.168 and not dst net 224' "
-        f"--quack {quacking_interval} "
-        f"--threshold {threshold} "
-        f"> ./logs/sidekick_proxy.log 2>&1 &"
+        f"{EXEC_DIR}/webrtc_client "
+        f"--server-ip {server_ip} "
+        f"--frequency {AUDIO_SEND_RATE} "
+        f"--duration {AUDIO_DURATION} "
+        "> ./logs/webrtc_client.log 2>&1 &"
     )
     return node.cmd(cmd)
 
 
-def run_webrtc_server(node, rtt, port=9000):
-    cmd = f"{EXEC_DIR}/webrtc_server --rtt {rtt} --port {port} > ./logs/webrtc_server.log 2>&1 &"
+def run_sidekick_proxy(node, interface):
+    cmd = (
+        f"{EXEC_DIR}/sidekick_proxy "
+        f"--interface {interface} "
+        f"--filter 'ip and udp and not dst net 192.168 and not dst net 224' "
+        f"--quack {QUACKING_INTERVAL} "
+        f"--threshold {MISSING_PACKET_THRESHOLD} "
+        "> ./logs/sidekick_proxy.log 2>&1 &"
+    )
+    return node.cmd(cmd)
+
+
+def run_webrtc_server(node, rtt):
+    cmd = (
+        f"{EXEC_DIR}/webrtc_server "
+        f"--rtt {rtt} "
+        f"--frequency {AUDIO_SEND_RATE} "
+        f"--duration {AUDIO_DURATION} "
+        "> ./logs/webrtc_server.log 2>&1 &"
+    )
     return node.cmd(cmd)
 
 

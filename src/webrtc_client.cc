@@ -169,36 +169,15 @@ public:
         continue;
       }
 
+      std::unique_lock lk( receiver_lock_ );
+
       // Calculate power sums from sender's side (set of all sent packets)
       size_t first_quacked_idx = next_unquacked_idx;
-      {
-        std::unique_lock lk( receiver_lock_ );
-        for ( size_t i = next_unquacked_idx; i < sent_packet_ids_.size(); i++ ) {
-          running_sums.add( sent_packet_ids_[i] );
-          if ( sent_packet_ids_[i] == received_quack.last_received_id ) {
-            next_unquacked_idx = i + 1;
-            break;
-          }
-        }
-      }
-
-      // // Could be used to detect when missing more packets that `missing_packet_threshold`, but since we
-      // // do not reset Sidekick, we can ignore this for now.
-      // uint32_t prev_num_missing = num_missing;
-
-      // Derive polynomial with coefficients from difference of power sums, and find roots (missing packets)
-      Polynomial diff_poly = Polynomial( running_sums.difference( received_quack.power_sums ) );
-      {
-        std::unique_lock lk( receiver_lock_ );
-        for ( size_t i = first_quacked_idx; i < next_unquacked_idx; i++ ) {
-          uint32_t packet_id = sent_packet_ids_[i];
-          if ( diff_poly.eval( packet_id ) == 0 ) {
-            std::cerr << "Retransmitting missing seqno based on quACK: " << packet_ids_to_seqnos_[packet_id]
-                      << std::endl;
-            retransmit( packet_ids_to_seqnos_[packet_id], packet_id );
-            running_sums.remove( packet_id );
-            num_missing++;
-          }
+      for ( size_t i = next_unquacked_idx; i < sent_packet_ids_.size(); i++ ) {
+        running_sums.add( sent_packet_ids_[i] );
+        if ( sent_packet_ids_[i] == received_quack.last_received_id ) {
+          next_unquacked_idx = i + 1;
+          break;
         }
       }
 
@@ -206,8 +185,21 @@ public:
                 << "num_received: " << received_quack.num_received << "\n"
                 << "last_received_id: " << received_quack.last_received_id << "\n"
                 << "power_sums: " << received_quack.power_sums << "\n"
+                << "local power sums: " << running_sums << "\n"
                 << "total packets missing: " << num_missing << "\n"
                 << std::endl;
+
+      // Derive polynomial with coefficients from difference of power sums, and find roots (missing packets)
+      Polynomial diff_poly( running_sums.difference( received_quack.power_sums ) );
+      for ( size_t i = first_quacked_idx; i < next_unquacked_idx; i++ ) {
+        uint32_t packet_id = sent_packet_ids_[i];
+        if ( diff_poly.eval( packet_id ) == 0 ) {
+          std::cerr << "Retransmitting based on quACK, seqno: " << packet_ids_to_seqnos_[packet_id] << " packet_id: " << packet_id << std::endl;
+          retransmit( packet_ids_to_seqnos_[packet_id], packet_id );
+          running_sums.remove( packet_id );
+          num_missing++;
+        }
+      }
     }
   }
 };

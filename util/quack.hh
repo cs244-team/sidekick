@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <iostream>
 #include <memory>
+#include <set>
 #include <vector>
 
 // 32-bit Modular Integer
@@ -125,18 +126,25 @@ public:
     stream << obj.value_;
     return stream;
   }
+
+  friend bool operator<( const ModInt& l, const ModInt& r ) { return l.value_ < r.value_; };
 };
 
 class PowerSums
 {
 private:
   std::vector<ModInt> sums_ {};
+  std::set<ModInt> items_ {};
   size_t threshold_;
 
 public:
   PowerSums( size_t threshold ) : threshold_( threshold ) { sums_.resize( threshold ); }
   // Directly construct the power sums
-  PowerSums( std::vector<ModInt>& sums ) : threshold_( sums.size() ), sums_( std::move( sums ) ) {};
+  PowerSums( std::vector<ModInt>& sums )
+  {
+    sums_ = std::move( sums );
+    threshold_ = sums_.size();
+  };
 
   size_t size() const { return threshold_; }
   void add( const ModInt n );

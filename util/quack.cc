@@ -2,6 +2,11 @@
 
 void PowerSums::add( const ModInt n )
 {
+  if ( items_.contains( n ) ) {
+    return;
+  }
+  items_.emplace( n );
+
   ModInt tmp = n;
   for ( size_t i = 0; i < threshold_; i++ ) {
     sums_[i] += tmp;
@@ -11,6 +16,11 @@ void PowerSums::add( const ModInt n )
 
 void PowerSums::remove( const ModInt n )
 {
+  if ( !items_.contains( n ) ) {
+    return;
+  }
+  items_.erase( n );
+
   ModInt tmp = n;
   for ( size_t i = 0; i < threshold_; i++ ) {
     sums_[i] -= tmp;

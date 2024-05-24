@@ -29,6 +29,11 @@ private:
   UDPSocket client_socket_ {};
   uint16_t client_port_ {};
 
+  // Map of missing seqnos <-> count of seqnos received that are >= missing seqno
+  // (similar to TCP 3-dup ACK logic -- retx only if >= 3 later packets went through)
+  // TODO: naming?
+  std::unordered_map<uint32_t, uint32_t> unquacked_reordered_;
+
   // The "peer" we are sending data to
   Address webrtc_server_address_;
 
@@ -186,7 +191,7 @@ public:
                 << "last_received_id: " << received_quack.last_received_id << "\n"
                 << "power_sums: " << received_quack.power_sums << "\n"
                 << "local power sums: " << running_sums << "\n"
-                << "total packets missing: " << num_missing << "\n"
+                << "total packets missing/reordered: " << num_missing << "\n"
                 << std::endl;
 
       // Derive polynomial with coefficients from difference of power sums, and find roots (missing packets)
@@ -194,10 +199,21 @@ public:
       for ( size_t i = first_quacked_idx; i < next_unquacked_idx; i++ ) {
         uint32_t packet_id = sent_packet_ids_[i];
         if ( diff_poly.eval( packet_id ) == 0 ) {
-          std::cerr << "Retransmitting based on quACK, seqno: " << packet_ids_to_seqnos_[packet_id] << " packet_id: " << packet_id << std::endl;
-          retransmit( packet_ids_to_seqnos_[packet_id], packet_id );
-          running_sums.remove( packet_id );
-          num_missing++;
+          if (unquacked_reordered_[packet_id] >= 3) {
+            std::cerr << "Retransmitting based on quACK, seqno: " << packet_ids_to_seqnos_[packet_id] << " packet_id: " << packet_id << std::endl;
+            retransmit( packet_ids_to_seqnos_[packet_id], packet_id );
+          }
+          else if (unquacked_reordered_[packet_id] == 0) {
+            num_missing++;
+          }
+        }
+        else {
+          unquacked_reordered_.erase(packet_id);
+          for ( auto& kv : unquacked_reordered_ ) {
+            if (packet_ids_to_seqnos_[packet_id] > kv.first) {
+              unquacked_reordered_[kv.first]++;
+            }
+          }
         }
       }
     }

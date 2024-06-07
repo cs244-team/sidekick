@@ -1,7 +1,8 @@
 # CS244 Project
 
 ## Setup
-Run the commands below to install the necessary packages for this project
+
+To install the necessary packages for this project, run the following commands:
 
 ```bash
 sudo apt update
@@ -26,13 +27,12 @@ cmake —-build build
 
 ## Sidekick
 
-In order to reproduce the results of our replication, upload the `src/`, `util/`, and `scripts/` directories to your nearest Google Cloud server and
-install all the necessary dependancies outlined above within the server. 
+To reproduce the results of our replication, follow these steps:
 
-Run `scripts/run_server.sh` to listen for incoming packets over the WebRTC protocol and aggregate packets into the de-jitter buffer.
+1. Upload the `src/`, `util/`, and `scripts/` directories to your nearest Google Cloud server.
+2. Install all the necessary dependencies outlined in the setup section on the server.
+3. Run `scripts/run_server.sh` to listen for incoming packets over the WebRTC protocol and aggregate packets into the de-jitter buffer.
+4. Run `scripts/run_proxy.sh` to run the sidekick proxy from the Raspberry Pi to send quACKs to the client.
+5. Run `scripts/run_client.sh` to send outgoing packets to the server from your local laptop.
 
-Run `scripts/run_proxy` to run the sidekick proxy from the Raspberry Pi to send quACKs to the client. 
-
-Run `scripts/run_client.sh` to send outgoing packets to the server from your local laptop.
-
-The results will be dumped into a csv file for further examination.
+The results will be dumped into a CSV file for further examination.

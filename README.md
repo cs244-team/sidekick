@@ -23,7 +23,13 @@ cmake —-build build
 
 ## Mininet
 
-[TODO]
+Run the command below to start the emulation in Mininet
+
+```bash
+sudo python3 evaluation/emulation.py
+```
+
+The parameters of the Mininet topology can be set within the `emulation.py` file for further experimentation
 
 ## Sidekick
 

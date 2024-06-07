@@ -11,10 +11,10 @@ sudo apt install git cmake gdb build-essential \
      pkg-config glibc-doc tcpdump tshark libpcap-dev
 ```
 
-To install the cryptography library we use, please see: https://libsodium.gitbook.io/doc/installation
+To install the cryptography library we use, please see: https://libsodium.gitbook.io/doc/installation. To use an iPhone's personal hotspot with the Raspberry Pi 4 via USB tethering, [`libimobiledevice`](https://github.com/libimobiledevice/libimobiledevice) needs to be installed.
 
 ## Build
-Run the commands below to make and build the project
+Run the commands below to make and build the project:
 
 ```bash
 cmake -S . -B build
@@ -23,13 +23,13 @@ cmake —-build build
 
 ## Mininet
 
-Run the command below to start the emulation in Mininet
+Run the command below to start the emulation in Mininet:
 
 ```bash
 sudo python3 evaluation/emulation.py
 ```
 
-The parameters of the Mininet topology can be set within the `emulation.py` file for further experimentation
+The parameters of the Mininet topology can be set within the `emulation.py` file for further experimentation.
 
 ## Sidekick
 

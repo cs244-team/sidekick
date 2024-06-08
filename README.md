@@ -13,6 +13,11 @@ sudo apt install git cmake gdb build-essential \
 
 To install the cryptography library we use, please see: https://libsodium.gitbook.io/doc/installation. To use an iPhone's personal hotspot with the Raspberry Pi 4 via USB tethering, [`libimobiledevice`](https://github.com/libimobiledevice/libimobiledevice) needs to be installed.
 
+### Infrastructure
+
+1. Set up a Raspberry Pi tethered to a cellular hotspot (we used 4G LTE).
+2. Run a Google Cloud server in your nearest region.
+
 ## Build
 Run the commands below to make and build the project:
 
